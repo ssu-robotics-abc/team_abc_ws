@@ -1,0 +1,135 @@
+# =========================
+# ROS2 / colcon build output
+# =========================
+build/
+install/
+log/
+
+# colcon metadata
+.colcon/
+.colcon_build/
+.colcon_test_result/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python package/build artifacts
+*.egg-info/
+.eggs/
+dist/
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# C / C++ / CMake
+# =========================
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+*.o
+*.so
+*.a
+*.dll
+*.dylib
+*.exe
+*.out
+
+# =========================
+# ROS generated files
+# =========================
+*.bag
+*.bag.active
+*.db3
+*.mcap
+
+# =========================
+# Logs / runtime data
+# =========================
+*.log
+logs/
+runtime_logs/
+experiment_logs/
+
+# CSV / SQLite experiment output
+*.csv
+*.sqlite
+*.sqlite3
+*.db
+
+# =========================
+# ML / Vision artifacts
+# =========================
+runs/
+weights/
+datasets/
+data/
+models/
+checkpoints/
+
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+
+# YOLO / Ultralytics
+yolo*.pt
+best.pt
+last.pt
+
+# =========================
+# Camera / calibration output
+# =========================
+calibration_results/
+handeye_results/
+camera_info/
+*.yaml.bak
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+*.secret
+secrets/
+credentials/
+api_keys.json
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+.cache/
