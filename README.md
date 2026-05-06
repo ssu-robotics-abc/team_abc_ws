@@ -7,6 +7,27 @@
 
 > 전체 시스템을 실행하기 위한 launch/config 전용 패키지
 
+### Quick Start
+
+```bash
+ros2_ws
+ws_moveit
+ros2 launch dsr_bringup2 dsr_bringup2_rviz.launch.py mode:=real model:=m0609 host:=192.168.1.100
+ros2 launch realsense2_camera rs_align_depth_launch.py depth_module.depth_profile:=640x480x30 rgb_camera.color_profile:=640x480x30 initial_reset:=true align_depth.enable:=true
+```
+대신
+
+```bash
+ros2_ws
+ws_moveit
+ros2 launch abc_bringup demo.launch.py
+```
+
+로 실행 가능  
+  
+
+
+
 필요 역할:  
 - 전체 노드 실행 관리  
 - RealSense 실행  
