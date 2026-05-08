@@ -8,9 +8,8 @@ from scipy.spatial.transform import Rotation
 from abc_manipulation.realsense import ImgNode
 from abc_manipulation.onrobot import RG
 import DR_init
-# [수정] 커스텀 메시지 임포트 (패키지명에 맞게 확인 필요)
-# from abc_interfaces.msg import DetectedObjectArray 
-from abc_interfaces.msg import DetectionArray
+
+from abc_interfaces.msg import DetectedObjectArray 
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
