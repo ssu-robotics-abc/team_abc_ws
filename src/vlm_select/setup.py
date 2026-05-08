@@ -35,7 +35,6 @@ setup(
             'stt_node = vlm_select.stt_node:main',
             'stt_robot_control = vlm_select.stt_robot_control:main',
             'stt_pick_and_place = vlm_select.stt_pick_and_place:main',
-            'vlm_test = vlm_select.snack_pick:main',
             'vlm_api_node = vlm_select.vlm_api_node:main',
             'vlm_command_node = vlm_select.vlm_command_node:main',
             'yolo_detector_node = vlm_select.yolo_detector_node:main',
