@@ -27,6 +27,7 @@ setup(
             'test_server = abc_manipulation.test_server:main',
             'task_planner = abc_manipulation.task_planner:main',
             'place_item = abc_manipulation.place_item:main',
+            'pick_item = abc_manipulation.pick_item:main',
         ],
     },
 )
