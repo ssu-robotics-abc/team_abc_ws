@@ -8,8 +8,7 @@ from scipy.spatial.transform import Rotation
 from realsense import ImgNode
 from onrobot import RG
 import DR_init
-# [수정] 커스텀 메시지 임포트 (패키지명에 맞게 확인 필요)
-# from abc_interfaces.msg import DetectedObjectArray 
+
 from abc_interfaces.msg import DetectedObjectArray 
 
 # ======================
