@@ -1,0 +1,8 @@
+# Goal
+bool is_corrected
+---
+# Result
+bool success
+---
+# Feedback
+string state

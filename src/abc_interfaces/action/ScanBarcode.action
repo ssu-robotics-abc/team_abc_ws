@@ -1,0 +1,9 @@
+# Goal
+int32 product_id
+---
+# Result
+bool success
+bool is_corrected
+---
+# Feedback
+string state
