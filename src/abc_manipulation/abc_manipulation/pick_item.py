@@ -1,15 +1,19 @@
+import os
 import cv2
 import rclpy
 import time
-import numpy as np
 import threading
+import numpy as np
 from scipy.spatial.transform import Rotation
 
 from abc_manipulation.realsense import ImgNode
 from abc_manipulation.onrobot import RG
+from ament_index_python.packages import get_package_share_directory
 import DR_init
 
-from abc_interfaces.msg import DetectedObjectArray 
+from abc_manipulation.realsense import ImgNode
+from abc_manipulation.onrobot import RG
+from abc_interfaces.msg import DetectionArray 
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
@@ -48,11 +52,11 @@ class TestNode:
             rclpy.spin_once(self.img_node, timeout_sec=0.1)
 
         self.intrinsics = self.img_node.get_camera_intrinsic()
-        self.gripper2cam = np.array(
-            [[-9.99419954e-01, 2.64817788e-02, 2.14119182e-02, 2.67871780e+01],
- [-2.61544385e-02,  -9.99538886e-01,  1.54259848e-02,  4.30822834e+01],
- [ 2.18105524e-02,  1.48570203e-02,  9.99651724e-01,  1.71277841e+01],
- [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]])
+        
+        # 그리퍼-카메라 변환 행렬 로드
+        package_path = get_package_share_directory("abc_manipulation")
+        gripper2cam_file_path = os.path.join(package_path, 'T_gripper2camera.npy')
+        self.gripper2cam = np.load(gripper2cam_file_path)
 
         self.gripper = RG("rg2", "192.168.1.1", 502)
 
