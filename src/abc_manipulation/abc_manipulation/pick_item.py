@@ -5,11 +5,11 @@ import numpy as np
 import threading
 from scipy.spatial.transform import Rotation
 
-from realsense import ImgNode
-from onrobot import RG
+from abc_manipulation.realsense import ImgNode
+from abc_manipulation.onrobot import RG
 import DR_init
 
-from abc_interfaces.msg import DetectedObjectArray 
+from abc_interfaces.msg import DetectionArray 
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
@@ -48,7 +48,13 @@ class TestNode:
             rclpy.spin_once(self.img_node, timeout_sec=0.1)
 
         self.intrinsics = self.img_node.get_camera_intrinsic()
-        self.gripper2cam = np.load("T_gripper2camera.npy")
+        #Todo self.gripper2cam = np.load("T_gripper2camera.npy")
+        self.gripper2cam = np.array(
+            [[-9.99419954e-01, 2.64817788e-02, 2.14119182e-02, 2.67871780e+01],
+ [-2.61544385e-02,  -9.99538886e-01,  1.54259848e-02,  4.30822834e+01],
+ [ 2.18105524e-02,  1.48570203e-02,  9.99651724e-01,  1.71277841e+01],
+ [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]])
+
         self.gripper = RG("rg2", "192.168.1.1", 502)
 
         # 시작 포즈 설정
