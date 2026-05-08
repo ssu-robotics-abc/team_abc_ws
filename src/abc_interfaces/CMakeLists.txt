@@ -9,17 +9,29 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PurchaseItem.msg"
+  "msg/DetectedObject.msg"
+  "msg/DetectionArray.msg"
   "action/PickItem.action"
   "action/ScanBarcode.action"
   "action/PlaceItem.action"
-  DEPENDENCIES action_msgs std_msgs
+  DEPENDENCIES 
+    std_msgs 
+    action_msgs
+    geometry_msgs
+    sensor_msgs
+    builtin_interfaces
 )
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  set(ament_cmake_copyright_FOUND TRUE)
+  set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
