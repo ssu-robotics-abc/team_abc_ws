@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os # os 모듈 추가 필요
 
-package_name = 'dsr_practice'
+package_name = 'vlm_select'
 
 setup(
     name=package_name,
@@ -14,7 +14,7 @@ setup(
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         (
             'share/' + package_name + '/config',
-            glob('config/*.yaml') + glob('dsr_practice/Calibration_Tutorial/*.npy')
+            glob('config/*.yaml') + glob('vlm_select/Calibration_Tutorial/*.npy')
         ),
         ('share/' + package_name, glob('best.pt')),
         ('share/' + package_name, ['package.xml']),
