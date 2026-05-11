@@ -1,5 +1,5 @@
 from setuptools import find_packages, setup
-
+import os
 package_name = 'abc_perception'
 
 setup(
@@ -7,9 +7,10 @@ setup(
     version='0.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
-        ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
+        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        # [핵심] 모델 파일을 패키지의 share 디렉토리로 설치
+        (os.path.join('share', package_name, 'models'), ['models/best.pt']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
