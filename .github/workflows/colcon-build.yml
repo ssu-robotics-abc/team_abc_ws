@@ -39,7 +39,7 @@ jobs:
 
       - name: Update rosdep
         run: |
-          set -euxo pipefail
+          set -exo pipefail
 
           source /opt/ros/${ROS_DISTRO}/setup.bash
 
@@ -51,7 +51,7 @@ jobs:
 
       - name: Resolve package dependencies
         run: |
-          set -euxo pipefail
+          set -exo pipefail
 
           source /opt/ros/${ROS_DISTRO}/setup.bash
 
@@ -65,7 +65,7 @@ jobs:
 
       - name: Build workspace
         run: |
-          set -euxo pipefail
+          set -exo pipefail
 
           source /opt/ros/${ROS_DISTRO}/setup.bash
 
