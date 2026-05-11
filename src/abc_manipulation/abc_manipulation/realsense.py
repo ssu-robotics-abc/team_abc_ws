@@ -1,7 +1,7 @@
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
-
+from abc_interfaces.msg import DetectionArray 
 
 class ImgNode(Node):
     def __init__(self):
@@ -11,12 +11,19 @@ class ImgNode(Node):
         self.color_frame_stamp = None
         self.depth_frame = None
         self.intrinsics = None
+  
+        self.latest_detection_msg = None
+
         self.color_subscription = self.create_subscription(
             Image, '/camera/camera/color/image_raw', self.color_callback, 10)
         self.depth_subscription = self.create_subscription(
             Image, '/camera/camera/aligned_depth_to_color/image_raw', self.depth_callback, 10)
         self.camera_info_subscription = self.create_subscription(
             CameraInfo, '/camera/camera/color/camera_info', self.camera_info_callback, 10)
+        
+     
+        self.detection_subscription = self.create_subscription(
+            DetectionArray, '/detections', self.detection_callback, 10)
 
     def camera_info_callback(self, msg):
         self.intrinsics = {"fx": msg.k[0], "fy": msg.k[4], "ppx": msg.k[2], "ppy": msg.k[5]}
@@ -27,6 +34,10 @@ class ImgNode(Node):
 
     def depth_callback(self, msg):
         self.depth_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+
+
+    def detection_callback(self, msg):
+        self.latest_detection_msg = msg
 
     def get_color_frame(self):
         return self.color_frame
@@ -39,3 +50,6 @@ class ImgNode(Node):
 
     def get_camera_intrinsic(self):
         return self.intrinsics
+
+    def get_latest_detection_msg(self):
+        return self.latest_detection_msg

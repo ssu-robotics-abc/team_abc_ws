@@ -80,7 +80,7 @@ runs/
 weights/
 datasets/
 data/
-models/
+#models/
 checkpoints/
 
 *.pt
@@ -132,4 +132,6 @@ api_keys.json
 # =========================
 tmp/
 temp/
-.cache/
+i.cache/
+
+!src/abc_perception/models/best.pt

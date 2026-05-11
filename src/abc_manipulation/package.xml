@@ -3,13 +3,21 @@
 <package format="3">
   <name>abc_manipulation</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Robot manipulation package for picking and placing items</description>
   <maintainer email="ssu@todo.todo">ssu</maintainer>
   <license>TODO: License declaration</license>
 
+  <!-- 핵심 의존성 -->
   <depend>rclpy</depend>
   <depend>abc_interfaces</depend>
   <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend> <!-- Realsense 이미지 처리에 필요 -->
+  <depend>std_msgs</depend>    <!-- Header 등에 필요 -->
+  
+  <!-- Python 라이브러리 의존성 -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
