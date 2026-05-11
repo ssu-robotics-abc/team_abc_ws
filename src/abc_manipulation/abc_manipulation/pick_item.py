@@ -1,12 +1,14 @@
+import os
 import cv2
 import rclpy
 import time
-import numpy as np
 import threading
+import numpy as np
 from scipy.spatial.transform import Rotation
 
 from abc_manipulation.realsense import ImgNode
 from abc_manipulation.onrobot import RG
+from ament_index_python.packages import get_package_share_directory
 import DR_init
 
 from abc_interfaces.msg import DetectionArray 
@@ -38,26 +40,29 @@ except ImportError:
 X_OFFSET           = 185.0   # 그리퍼 중심 보정 (mm)
 SIDE_APPROACH_DIST = 100.0   # 물체 정면 대기 거리 (mm)
 SAFE_Z             = 400.0   # 이동 안전 높이
-SQUEEZE_RATIO      = 0.95    # 파지 보정
-GRIPPER_FORCE      = 5       # 파지 힘 (N)
+SQUEEZE_RATIO      = 0.95    # 파지 보정 (박스 재질 고려)
 
 class TestNode:
     def __init__(self):
         self.img_node = ImgNode()
+        print("카메라 및 비전 파라미터 대기 중...")
         while rclpy.ok() and self.img_node.get_camera_intrinsic() is None:
             rclpy.spin_once(self.img_node, timeout_sec=0.1)
 
         self.intrinsics = self.img_node.get_camera_intrinsic()
-        #Todo self.gripper2cam = np.load("T_gripper2camera.npy")
-        self.gripper2cam = np.array(
-            [[-9.99419954e-01, 2.64817788e-02, 2.14119182e-02, 2.67871780e+01],
- [-2.61544385e-02,  -9.99538886e-01,  1.54259848e-02,  4.30822834e+01],
- [ 2.18105524e-02,  1.48570203e-02,  9.99651724e-01,  1.71277841e+01],
- [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]])
-
+        
+        # [표준 방식] 그리퍼-카메라 변환 행렬 로드
+        package_path = get_package_share_directory("abc_manipulation")
+        gripper2cam_file_path = os.path.join(package_path, 'T_gripper2camera.npy')
+        
+        if not os.path.exists(gripper2cam_file_path):
+            # 빌드 전 src 폴더에서 찾기 위한 예외 처리
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            gripper2cam_file_path = os.path.join(current_dir, "T_gripper2camera.npy")
+            
+        self.gripper2cam = np.load(gripper2cam_file_path)
         self.gripper = RG("rg2", "192.168.1.1", 502)
 
-        # 시작 포즈 설정
         self.JReady = posj([0, 0, 135, 0, -45, 90])
         self.home_pose = None  
         self.target_object = None  
@@ -85,13 +90,10 @@ class TestNode:
                 self.target_object = cmd
 
     def pick_and_place(self, x, y, z, target_width):
-        # [각도 고정] 현재 위치의 각도를 가져와서 작업 내내 고정 (수평 유지)
         cur = get_current_posx()[0]
         fixed_rx, fixed_ry, fixed_rz = cur[3:]
         
         print(f"\n>>> {self.target_object} 수평 집기 수행")
-        print(f"각도 유지: [{fixed_rx}, {fixed_ry}, {fixed_rz}]")
-        
         hx, hy, hz, hrx, hry, hrz = self.home_pose
         self.gripper.open_gripper()
         
@@ -106,7 +108,7 @@ class TestNode:
         
         # 3. 파지
         print(f"[파지] 목표 너비: {target_width/10:.1f}mm")
-        self.gripper.move_gripper(width_val=target_width, force=GRIPPER_FORCE) 
+        self.gripper.move_gripper(width_val=target_width) 
         time.sleep(1.2) 
 
         # 4. 후퇴 (뒤로 빠지기)
@@ -116,8 +118,7 @@ class TestNode:
         movel(posx([wait_x, y, SAFE_Z, fixed_rx, fixed_ry, fixed_rz]), VELOCITY, ACC)
         movel(posx([hx, hy, SAFE_Z, hrx, hry, hrz]), VELOCITY, ACC)
         
-        # 6. 복귀
-        # self.gripper.open_gripper() # 투하가 필요하면 주석 해제
+        # 6. 초기화
         time.sleep(1.0)
         movej(self.JReady, VELOCITY, ACC)
         
@@ -125,8 +126,6 @@ class TestNode:
         print(">>> 작업 완료.")
 
     def run(self):
-        # [수정] 이제 모델을 로드하지 않고 ImgNode의 메시지를 사용합니다.
-        
         executor = rclpy.executors.MultiThreadedExecutor()
         executor.add_node(self.img_node)
         threading.Thread(target=executor.spin, daemon=True).start()
@@ -137,33 +136,23 @@ class TestNode:
         self.home_pose = get_current_posx()[0]
         self.gripper.open_gripper()
 
+        print("루프 시작 (YOLO 노드를 먼저 실행해주세요)...")
         while True:
             img_frame = self.img_node.get_color_frame()
             depth_frame = self.img_node.get_depth_frame()
-            
             detection_msg = self.img_node.get_latest_detection_msg()
 
-            if img_frame is None or depth_frame is None or detection_msg is None:
-                continue
+            
 
             # 타겟 물체가 지정되었고, 현재 작업 중이 아닐 때만 실행
-            if self.target_object is not None and not self.is_picking:
-                # 전달받은 객체 리스트 순회
-                for obj in detection_msg.objects:
-                    name = obj.class_name
-                    conf = obj.confidence
-                    
-                    if name == self.target_object and conf >= 0.6:
-                        # 1. 메시지 필드 데이터 추출
+            if self.target_object is not None and not self.is_picking and detection_msg is not None:
+                for obj in detection_msg.detections:
+                    if obj.class_name == self.target_object and obj.confidence >= 0.6:
                         cx, cy = int(obj.center_x), int(obj.center_y)
-                        pixel_width = obj.width
-                        # obj.heigh 는 필요 시 사용 (사용자 메시지 정의의 오타 반영)
                         
-                        # 2. 깊이값 확인
                         z_dist = depth_frame[cy, cx]
                         if z_dist == 0: continue
 
-                        # 3. 좌표 변환
                         capture_pose = get_current_posx()[0]
                         fx, fy = self.intrinsics["fx"], self.intrinsics["fy"]
                         ppx, ppy = self.intrinsics["ppx"], self.intrinsics["ppy"]
@@ -171,47 +160,28 @@ class TestNode:
                         cam_coords = ((cx - ppx) * z_dist / fx, (cy - ppy) * z_dist / fy, z_dist)
                         base_xyz = self.transform_to_base(cam_coords, capture_pose)
 
-                        # 4. 너비 계산 (Side Picking용)
-                        obj_width_mm = (pixel_width * z_dist) / fx
+                        # 너비 계산
+                        obj_width_mm = (obj.width * z_dist) / fx
                         target_w = int(obj_width_mm * 10 * SQUEEZE_RATIO)
                         target_w = max(0, min(target_w, 1100))
 
-                        # === 디버깅 출력 ===
-                        print("\n" + "="*50)
-                        print(f"[Target Found] {name} (Conf: {conf:.2f})")
-                        print(f"Distance: {z_dist:.2f}mm | Width: {obj_width_mm:.1f}mm")
-                        print(f"Robot Pose: X={base_xyz[0]:.2f}, Y={base_xyz[1]:.2f}, Z={base_xyz[2]:.2f}")
-                        print("="*50 + "\n")
-
-                        # 5. 스레드 실행
+                        print(f"\n\n[Found] {obj.class_name} | Dist: {z_dist:.1f}mm | Base: {base_xyz}")
+                        
                         self.is_picking = True
                         self.target_object = None 
                         threading.Thread(target=self.pick_and_place, args=(*base_xyz, target_w), daemon=True).start()
                         break
 
-            # 화면 출력 (YOLO가 그린 그림 대신 원본 프레임 표시)
-            cv2.imshow("Webcam View", img_frame)
-            if cv2.waitKey(1) & 0xFF == 27: break
 
-        cv2.destroyAllWindows()
+
 def main():
-
     try:
-
         test = TestNode()
-
         test.run()
-
     except KeyboardInterrupt:
-
         print("\n종료")
-
     finally:
-
         rclpy.shutdown()
 
-
-
 if __name__ == "__main__":
-
     main()
