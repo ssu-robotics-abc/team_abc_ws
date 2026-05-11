@@ -1,0 +1,84 @@
+name: ROS 2 colcon build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  colcon-build:
+    name: ROS 2 Humble / colcon build
+    runs-on: ubuntu-latest
+
+    container:
+      image: ghcr.io/ssu-robotics-abc/team_abc_ws-ros-ci:humble-v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    env:
+      ROS_DISTRO: humble
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clean previous colcon artifacts
+        run: |
+          rm -rf build install log
+
+      - name: Update rosdep
+        run: |
+          set -exo pipefail
+
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            rosdep init
+          fi
+
+          rosdep update
+
+      - name: Resolve package dependencies
+        run: |
+          set -exo pipefail
+
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+
+          rosdep install \
+            --from-paths src \
+            --ignore-src \
+            --rosdistro ${ROS_DISTRO} \
+            -y \
+            -r \
+            --skip-keys "dsr_msgs2 moveit_py"
+
+      - name: Build workspace
+        run: |
+          set -exo pipefail
+
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+
+          colcon build \
+            --symlink-install \
+            --event-handlers console_direct+ \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=OFF
+
+      - name: Upload colcon logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: colcon-logs
+          path: log
