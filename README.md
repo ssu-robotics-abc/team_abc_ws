@@ -32,7 +32,6 @@ ros2 launch abc_bringup demo.launch.py
 - 전체 노드 실행 관리  
 - RealSense 실행  
 - YOLO perception 노드 실행  
-- STT 노드 실행  
 - task planner 실행  
 - manipulation 노드 실행  
 - logger 실행  
