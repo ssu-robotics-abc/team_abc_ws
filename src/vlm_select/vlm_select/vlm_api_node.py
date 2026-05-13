@@ -100,8 +100,9 @@ class VlmLogicNode(Node):
         self.create_subscription(Image, "/yolo/annotated_image", self.yolo_image_callback, 10)
         
         self.create_subscription(String, "/yolo/detections", self.detections_callback, 10)
-        self.create_subscription(String, "/vlm_user_command", self.command_callback, 10)
-
+        # self.create_subscription(String, "/vlm_user_command", self.command_callback, 10)
+        self.create_subscription(String, "/stt_result", self.command_callback, 10)
+        
         # Publisher (Pick을 위해 확정된 타겟 시각화 이미지)
         self.result_pub = self.create_publisher(Image, "/vlm/target_image", 10)
 
