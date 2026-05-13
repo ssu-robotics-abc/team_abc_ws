@@ -1,4 +1,3 @@
-import time
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer
@@ -88,7 +87,7 @@ class PlaceItemServer(Node):
         movel(target_pose, VELOCITY, ACC)
         wait(0.5)
         self.gripper.open_gripper()
-        time.sleep(1.0)
+        wait(1.0)
         
         # Step 5: 다시 상승 및 홈 복귀
         feedback_msg.state = "작업 완료 후 홈 복귀 중..."
