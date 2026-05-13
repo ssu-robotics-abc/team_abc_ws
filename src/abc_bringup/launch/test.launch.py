@@ -11,6 +11,7 @@ from launch.substitutions import PathJoinSubstitution
 
 def generate_launch_description():
     abc_bringup_dir = get_package_share_directory("abc_bringup")
+    abc_speech_dir = get_package_share_directory("abc_speech")
 
     realsense_launch = os.path.join(
         abc_bringup_dir,
@@ -23,6 +24,12 @@ def generate_launch_description():
         "launch",
         "doosan_rviz.launch.py",
         # "doosan_moveit.launch.py",
+    )
+
+    speech_launch = os.path.join(
+        abc_speech_dir,
+        "launch",
+        "speech.launch.py",
     )
     
 
@@ -41,5 +48,8 @@ def generate_launch_description():
             }.items(),
         ),
 
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(speech_launch),
+        ),
 
     ])
