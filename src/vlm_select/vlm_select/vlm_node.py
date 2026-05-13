@@ -21,7 +21,7 @@ TARGET_CLASSES = [
 
 def get_target_from_gemini(cv_image, user_command):
     # API 키 설정
-    api_key = "AIzaSyC3CZIsFgJu3oBbYYj8EViLgxE46GNhQmg"
+    api_key = "API Key을 넣어주세요"
     genai.configure(api_key=api_key)
     
     # 모델 로드
