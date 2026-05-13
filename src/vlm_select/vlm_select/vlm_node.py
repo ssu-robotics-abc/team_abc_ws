@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-import base64
-import requests
+import os
 import json
 import cv2
 import rclpy
@@ -10,7 +9,9 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
 import google.generativeai as genai
+from dotenv import load_dotenv
 
+# abc_interfaces 패키지의 UserRequest 서비스 임포트
 from abc_interfaces.srv import UserRequest
 
 # 설정 파라미터
@@ -19,30 +20,41 @@ TARGET_CLASSES = [
     "soy_milk", "chocopie", "pepero_almond"
 ]
 
+# .env 파일 로드 (환경 변수 적용)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(current_dir, '.env')
+load_dotenv(dotenv_path=env_path)
+
 def get_target_from_gemini(cv_image, user_command):
-    # API 키 설정
-    api_key = "API Key을 넣어주세요"
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key is None:
+        print("[오류] .env 파일에서 GEMINI_API_KEY를 찾을 수 없습니다!")
+        return None
+
     genai.configure(api_key=api_key)
-    
-    # 모델 로드
     model = genai.GenerativeModel('gemini-3-flash-preview')
 
-    # OpenCV 이미지를 JPEG 바이트로 변환
     ok, buf = cv2.imencode('.jpg', cv_image)
     if not ok:
         print("[VLM 오류] 이미지 인코딩 실패")
         return None
     image_bytes = buf.tobytes()
 
+    # ==========================================
+    # 1. 다중 물품 처리를 위한 프롬프트 수정
+    # ==========================================
     prompt = (
         "너는 로봇의 시각 판단 모듈이다.\n"
-        "사용자의 명령에 알맞은 물체를 카메라 원본 이미지에서 찾고,\n"
-        f"다음 리스트에서 단 하나만 정확히 골라 사용자가 요구하는 개수와 함께 출력해라.\n"
-        "만약 요구하는 개수가 명시되어 있지 않다면 0 취급해라.\n"
-        "출력 형태는 다음과 같다:\n"
-        "클래스명 요구개수\n"
-        "반드시 출력 형태를 맞추고 영문 클래스명만 출력할 것 (마침표 등 제외).\n"
-        f"리스트: {TARGET_CLASSES}\n"
+        "사용자의 명령을 분석하여, 카메라 원본 이미지 내에서 조건에 맞는 물품들을 모두 찾아라.\n"
+        f"반드시 다음 제공된 리스트 내의 영문 클래스명만 선택해야 하며, 리스트에 없는 물품은 철저히 무시해라.\n"
+        f"리스트: {TARGET_CLASSES}\n\n"
+        "개수가 명시되지 않은 경우 0으로 취급하라.\n"
+        "출력은 반드시 아래 구조를 가진 JSON 배열(Array) 형식으로만 반환해야 한다.\n"
+        "예시:\n"
+        "[\n"
+        "  {\"class_name\": \"pepero_original\", \"iteration\": 2},\n"
+        "  {\"class_name\": \"pepsi\", \"iteration\": 1}\n"
+        "]\n\n"
         f"사용자 명령: {user_command}"
     )
 
@@ -54,26 +66,38 @@ def get_target_from_gemini(cv_image, user_command):
             ],
             generation_config=genai.types.GenerationConfig(
                 temperature=0.0,
+                # 2. JSON 포맷으로 강제 출력 설정
+                response_mime_type="application/json", 
             ),
             request_options={"timeout": 15.0} 
         )
         
         if not response.parts:
             print("[VLM 오류] 텍스트가 생성되지 않았습니다.")
-            return None
+            return []
             
         text = response.text.strip()
         
-        # '클래스명 개수' 형태로 오므로, 첫 번째 단어(클래스명)만 추출해서 리스트에 있는지 검증
-        parsed_class = text.split()[0] if text else ""
-        if parsed_class not in TARGET_CLASSES:
-            print(f"[VLM 경고] 리스트에 없는 값이 출력되었습니다: '{parsed_class}'")
-            
-        return text
+        # 3. JSON 문자열을 파이썬 리스트(List of Dicts)로 파싱
+        parsed_data = json.loads(text)
+        
+        # 클래스명이 리스트에 있는지 한 번 더 검증 (안전 장치)
+        valid_targets = []
+        for item in parsed_data:
+            c_name = item.get("class_name", "")
+            if c_name in TARGET_CLASSES:
+                valid_targets.append(item)
+            else:
+                print(f"[VLM 경고] 리스트에 없는 값이 필터링 되었습니다: '{c_name}'")
+                
+        return valid_targets
 
+    except json.JSONDecodeError as e:
+        print(f"\n[VLM 파싱 실패] JSON 형식이 올바르지 않습니다: {e}\n응답 데이터: {text}\n")
+        return []
     except Exception as e:
         print(f"\n[VLM SDK 통신 실패] {e}\n")
-        return None
+        return []
 
 
 class VlmLogicNode(Node):
@@ -82,13 +106,12 @@ class VlmLogicNode(Node):
         self.bridge = CvBridge()
         self.latest_raw_image = None
 
-        # Subscribers
         self.create_subscription(Image, "/camera/camera/color/image_raw", self.raw_image_callback, 10)
         self.create_subscription(String, "/vlm_user_command", self.command_callback, 10)
 
         self.cli = self.create_client(UserRequest, "/vlm_request")
 
-        self.get_logger().info("VLM Logic 노드 가동 완료. 원본 이미지 연동 됨. 명령 대기 중...")
+        self.get_logger().info("VLM Logic 노드 가동 완료. 명령 대기 중...")
 
     def raw_image_callback(self, msg):
         try:
@@ -98,55 +121,57 @@ class VlmLogicNode(Node):
 
     def command_callback(self, msg):
         user_command = msg.data.strip()
-        self.get_logger().info(f"\n[{user_command}] 명령 수신됨. 분석 시작...")
+        self.get_logger().info(f"\n[{user_command}] 명령 수신됨. 다중 타겟 분석 시작...")
 
         if self.latest_raw_image is None:
             self.get_logger().error("아직 카메라 원본 영상이 들어오지 않았습니다.")
             return
 
         self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
-        target_word = get_target_from_gemini(self.latest_raw_image, user_command)
-        self.get_logger().info(f"▶ Gemini 응답: '{target_word}'")
+        target_list = get_target_from_gemini(self.latest_raw_image, user_command)
         
-        if not target_word:
-            self.get_logger().error("VLM 응답이 올바르지 않습니다.")
+        if not target_list:
+            self.get_logger().error("유효한 타겟을 찾지 못했거나 응답이 비어있습니다.")
             return
 
-        # "클래스명 요구개수" 문자열 파싱 (예: "snack 100")
-        parts = target_word.split()
-        if len(parts) >= 1:
-            class_name = parts[0]
-            # 두 번째 인자가 존재하고 숫자형태면 int로 변환, 아니면 기본값 0
-            iteration = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-        else:
-            self.get_logger().error("출력 포맷이 맞지 않습니다.")
-            return
+        self.get_logger().info(f"▶ Gemini 파싱 완료: {target_list}")
 
-        if class_name not in TARGET_CLASSES:
-            self.get_logger().error(f"타겟 확정 실패: {class_name}은(는) 리스트에 없습니다.")
-            return
+        # =========================================================
+        # 리스트(Array)로 묶어서 한 번에 전송
+        # =========================================================
+        class_names_list = []
+        iterations_list = []
 
-        # 서비스 서버가 켜져 있는지 확인
+        # 1. 파싱된 딕셔너리 리스트에서 데이터를 뽑아 각각의 배열로 만듭니다.
+        for target in target_list:
+            class_names_list.append(target["class_name"])
+            iterations_list.append(int(target["iteration"]))
+
+        # 2. 서비스 서버가 준비되었는지 확인
         if not self.cli.wait_for_service(timeout_sec=2.0):
             self.get_logger().error("서비스 서버(/vlm_request)가 준비되지 않았습니다.")
             return
 
-        # 서비스 요청 데이터 세팅 및 전송
-        self.get_logger().info(f"▶ 타겟 확정 완료: {class_name}, {iteration}개. 서비스 요청 전송 중...")
+        self.get_logger().info(f"▶ 일괄 서비스 요청 전송 중... [물품: {class_names_list}, 개수: {iterations_list}]")
+        
+        # 3. Request 객체 생성 후 리스트 데이터 대입
         req = UserRequest.Request()
-        req.class_name = class_name
-        req.iteration = iteration
+        req.class_names = class_names_list
+        req.iterations = iterations_list
 
-        # 비동기 방식으로 서비스 요청
+        # 4. 서비스 '한 번' 호출
         future = self.cli.call_async(req)
+        
+        # 5. 여러 번 보낼 필요가 없으므로 콜백도 단순해집니다.
         future.add_done_callback(self.response_callback)
 
-    # 서비스 응답을 처리하는 콜백 함수
+    # 콜백 함수도 단순하게 원상복구
     def response_callback(self, future):
         try:
             response = future.result()
-            # 서비스 응답에 따라 로그 출력 (response.success 등 서비스 정의에 맞게 수정 가능)
-            self.get_logger().info(f"✅ 서비스 요청 완료. 서버 응답 수신됨.")
+            self.get_logger().info(
+                f"✅ 서비스 응답 수신! [성공 여부: {response.success}, 메시지: {response.message}]"
+            )
         except Exception as e:
             self.get_logger().error(f"❌ 서비스 호출 실패: {e}")
 
