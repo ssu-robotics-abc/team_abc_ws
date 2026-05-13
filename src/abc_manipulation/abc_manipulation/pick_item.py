@@ -1,7 +1,6 @@
 import os
 import cv2
 import rclpy
-import time
 import threading
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -12,6 +11,22 @@ from ament_index_python.packages import get_package_share_directory
 import DR_init
 
 from abc_interfaces.msg import DetectionArray 
+<<<<<<< Updated upstream
+=======
+from rclpy.node import Node
+from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from abc_interfaces.action import PickItem
+
+# 클라이언트의 product_id와 비전의 클래스 이름 매핑 정보(임시)
+PRODUCT_MAP = {
+    1234: 'chocopie',
+    5678: 'pepsi',
+    2345: 'pocarisweat',
+    # 임시 물품들
+}
+>>>>>>> Stashed changes
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
@@ -67,6 +82,7 @@ class TestNode:
         self.home_pose = None  
         self.target_object = None  
         self.is_picking = False
+        self.action_done_event = threading.Event()
 
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
@@ -89,7 +105,30 @@ class TestNode:
             if cmd in valid_classes:
                 self.target_object = cmd
 
+<<<<<<< Updated upstream
     def pick_and_place(self, x, y, z, target_width):
+=======
+        if not target_name:
+            self.get_logger().error("알 수 없는 물품 ID입니다.")
+            goal_handle.abort()
+            return PickItem.Result(success=False)
+
+        self.get_logger().info(f"[액션 수신] 탐색 목표 설정: {target_name}")
+        
+        self.action_done_event.clear()
+
+        # 물품 이름 전달
+        self.target_object = target_name
+        
+        self.action_done_event.wait()
+
+        # 성공 처리
+        goal_handle.succeed()
+        self.get_logger().info(">>> 작업 완료 및 통신 성공")
+        return PickItem.Result(success=True)
+
+    def pick_and_place(self, x, y, z, target_width, target_name):
+>>>>>>> Stashed changes
         cur = get_current_posx()[0]
         fixed_rx, fixed_ry, fixed_rz = cur[3:]
         
@@ -109,7 +148,7 @@ class TestNode:
         # 3. 파지
         print(f"[파지] 목표 너비: {target_width/10:.1f}mm")
         self.gripper.move_gripper(width_val=target_width) 
-        time.sleep(1.2) 
+        wait(1.2) 
 
         # 4. 후퇴 (뒤로 빠지기)
         movel(posx([wait_x, y, z, fixed_rx, fixed_ry, fixed_rz]), VELOCITY, ACC)
@@ -119,11 +158,13 @@ class TestNode:
         movel(posx([hx, hy, SAFE_Z, hrx, hry, hrz]), VELOCITY, ACC)
         
         # 6. 초기화
-        time.sleep(1.0)
+        wait(1.0)
         movej(self.JReady, VELOCITY, ACC)
         
         self.is_picking = False
         print(">>> 작업 완료.")
+
+        self.action_done_event.set()
 
     def run(self):
         executor = rclpy.executors.MultiThreadedExecutor()
