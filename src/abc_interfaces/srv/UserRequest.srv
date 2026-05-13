@@ -1,5 +1,5 @@
-string class_name
-int32 iteration
+string[] class_name
+int32[] iteration
 ---
 bool success
 string message
