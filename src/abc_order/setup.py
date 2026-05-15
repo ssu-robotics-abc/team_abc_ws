@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'abc_speech'
+package_name = 'abc_order'
 
 setup(
     name=package_name,
@@ -27,8 +27,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'stt_node = abc_speech.stt_node:main',
-            'tts_node = abc_speech.tts_node:main',
+            'order_manager = abc_order.order_manager:main',
         ],
     },
 )

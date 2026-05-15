@@ -12,6 +12,7 @@ from launch.substitutions import PathJoinSubstitution
 def generate_launch_description():
     abc_bringup_dir = get_package_share_directory("abc_bringup")
     abc_speech_dir = get_package_share_directory("abc_speech")
+    abc_order_dir = get_package_share_directory("abc_order")
 
     realsense_launch = os.path.join(
         abc_bringup_dir,
@@ -32,24 +33,32 @@ def generate_launch_description():
         "speech.launch.py",
     )
     
+    order_launch = os.path.join(
+        abc_order_dir,
+        "launch",
+        "order.launch.py",
+    )
 
     return LaunchDescription([
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(realsense_launch),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(realsense_launch),
+        # ),
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(doosan_moveit_launch),
-            launch_arguments={
-                "mode": "real",
-                "model": "m0609",
-                "host": "192.168.1.100",
-                "port": "12345",
-            }.items(),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(doosan_moveit_launch),
+        #     launch_arguments={
+        #         "mode": "real",
+        #         "model": "m0609",
+        #         "host": "192.168.1.100",
+        #         "port": "12345",
+        #     }.items(),
+        # ),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(speech_launch),
         ),
 
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(order_launch),
+        ),
     ])

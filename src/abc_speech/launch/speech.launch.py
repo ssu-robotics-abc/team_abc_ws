@@ -1,14 +1,13 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.substitutions import PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
 
     stt_node = Node(
-        package="dsr_practice",
+        package="abc_speech",
         executable="stt_node",
+        name="stt_node",
         output="screen",
         parameters=[
             {"language": "ko-KR"},
@@ -21,5 +20,14 @@ def generate_launch_description():
         ],
     )
 
+    tts_node = Node(
+        package="abc_speech",
+        executable="tts_node",
+        name="tts_node",
+        output="screen",
+    )
 
-    return LaunchDescription([stt_node])
+    return LaunchDescription([
+        stt_node,
+        tts_node,
+    ])

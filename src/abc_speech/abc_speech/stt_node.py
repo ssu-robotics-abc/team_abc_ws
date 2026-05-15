@@ -1,8 +1,8 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
 
 import speech_recognition as sr
+from abc_interfaces.srv import Stt
 
 
 class SttNode(Node):
@@ -26,14 +26,12 @@ class SttNode(Node):
         dynamic_energy    = self.get_parameter("dynamic_energy").get_parameter_value().bool_value
         ambient_duration  = self.get_parameter("ambient_duration").get_parameter_value().double_value
 
-        self._pub = self.create_publisher(String, "/stt_result", 10)
-
-        self._log_devices()
-
         self._recognizer = sr.Recognizer()
         self._recognizer.energy_threshold = energy_thresh
         self._recognizer.pause_threshold = pause_thresh
         self._recognizer.dynamic_energy_threshold = dynamic_energy
+
+        self._log_devices()
 
         device = self._device_idx if self._device_idx >= 0 else None
         try:
@@ -49,9 +47,11 @@ class SttNode(Node):
                 f"energy_threshold={self._recognizer.energy_threshold:.1f}"
             )
 
-        self._stop_listen = self._recognizer.listen_in_background(
-            self._mic, self._on_audio, phrase_time_limit=self._phrase_lim,
-        )
+        self._srv = self.create_service(Stt, "/stt", self.stt_callback)
+    
+        # self._stop_listen = self._recognizer.listen_in_background(
+        #     self._mic, self._on_audio, phrase_time_limit=self._phrase_lim,
+        # )
 
         self.get_logger().info(
             f"STT 준비 완료  언어={self._lang}  device_index={self._device_idx}  "
@@ -64,32 +64,73 @@ class SttNode(Node):
             mark = " ◀" if idx == self._device_idx else ""
             self.get_logger().info(f"  [{idx}] {name}{mark}")
 
-    def _on_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData):
+    # def _on_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData):
+    #     try:
+    #         text = recognizer.recognize_google(audio, language=self._lang)
+    #     except sr.UnknownValueError:
+    #         return
+    #     except sr.RequestError as e:
+    #         self.get_logger().warning(f"Google STT 요청 실패: {e}")
+    #         return
+
+    #     text = (text or "").strip()
+    #     if not text:
+    #         return
+
+    #     self.get_logger().info(f"[STT] {text}")
+    #     msg = String()
+    #     msg.data = text
+    #     self._pub.publish(msg)
+
+    # def destroy_node(self):
+    #     stop = getattr(self, "_stop_listen", None)
+    #     if stop is not None:
+    #         try:
+    #             stop(wait_for_stop=False)
+    #         except Exception:
+    #             pass
+    #     super().destroy_node()
+    
+    def stt_callback(self, request, response):
+        self.get_logger().info(f"[STT 요청] {request.raw_text}")
+
         try:
-            text = recognizer.recognize_google(audio, language=self._lang)
+            with self._mic as source:
+                self.get_logger().info("음성 입력 대기 중...")
+                audio = self._recognizer.listen(
+                    source,
+                    timeout=10,
+                    phrase_time_limit=self._phrase_lim,
+                )
+
+            text = self._recognizer.recognize_google(audio, language=self._lang).strip()
+
+            response.success = True
+            response.recognized_text = text
+            self.get_logger().info(f"[STT 결과] {text}")
+
+        except sr.WaitTimeoutError:
+            response.success = False
+            response.recognized_text = ""
+            self.get_logger().warning("입력 시간 초과")
+            
         except sr.UnknownValueError:
-            return
+            response.success = False
+            response.recognized_text = ""
+            self.get_logger().warning("음성을 인식하지 못했습니다.")
+
         except sr.RequestError as e:
-            self.get_logger().warning(f"Google STT 요청 실패: {e}")
-            return
+            response.success = False
+            response.recognized_text = ""
+            self.get_logger().error(f"Google STT 요청 실패: {e}")
 
-        text = (text or "").strip()
-        if not text:
-            return
+        except Exception as e:
+            response.success = False
+            response.recognized_text = ""
+            self.get_logger().error(f"STT 실패: {e}")
+        
 
-        self.get_logger().info(f"[STT] {text}")
-        msg = String()
-        msg.data = text
-        self._pub.publish(msg)
-
-    def destroy_node(self):
-        stop = getattr(self, "_stop_listen", None)
-        if stop is not None:
-            try:
-                stop(wait_for_stop=False)
-            except Exception:
-                pass
-        super().destroy_node()
+        return response
 
 
 def main(args=None):
