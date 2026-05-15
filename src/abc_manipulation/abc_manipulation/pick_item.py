@@ -11,8 +11,6 @@ from ament_index_python.packages import get_package_share_directory
 import DR_init
 
 from abc_interfaces.msg import DetectionArray 
-<<<<<<< Updated upstream
-=======
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -26,7 +24,6 @@ PRODUCT_MAP = {
     2345: 'pocarisweat',
     # 임시 물품들
 }
->>>>>>> Stashed changes
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
