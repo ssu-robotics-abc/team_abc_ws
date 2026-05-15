@@ -20,12 +20,40 @@ TARGET_CLASSES = [
     "soy_milk", "chocopie", "pepero_almond"
 ]
 
+# KEYWORD_MAP = {
+#     "칸초": "Kancho", "칸쵸": "Kancho",
+#     "오리지널 빼빼로": "pepero_original", "빼빼로": "pepero_original",
+#     "펩시": "pepsi", "콜라": "pepsi",
+#     "포카리스웨트": "pocarisweat", "포카리": "pocarisweat",
+#     "소이밀크": "soy_milk", "두유": "soy_milk",
+#     "초코파이": "chocopie",
+#     "아몬드 빼빼로": "pepero_almond", "아몬드": "pepero_almond",
+# }
+
 # .env 파일 로드 (환경 변수 적용)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, '.env')
 load_dotenv(dotenv_path=env_path)
 
+
+# def get_targets_from_keywords(user_command):
+#     targets = []
+#     selected_classes = set()
+#     remaining_command = user_command
+#
+#     for kr_word in sorted(KEYWORD_MAP, key=len, reverse=True):
+#         if kr_word in remaining_command:
+#             class_name = KEYWORD_MAP[kr_word]
+#             if class_name not in selected_classes:
+#                 targets.append({"class_name": class_name, "iteration": 1})
+#                 selected_classes.add(class_name)
+#             remaining_command = remaining_command.replace(kr_word, " ")
+#
+#     return targets
+
+
 def get_target_from_gemini(cv_image, user_command):
+    cv_image = cv2.resize(cv_image, (640, 480))
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key is None:
         print("[오류] .env 파일에서 GEMINI_API_KEY를 찾을 수 없습니다!")
@@ -44,11 +72,14 @@ def get_target_from_gemini(cv_image, user_command):
     # 1. 다중 물품 처리를 위한 프롬프트 수정
     # ==========================================
     prompt = (
-        "너는 로봇의 시각 판단 모듈이다.\n"
-        "사용자의 명령을 분석하여, 카메라 원본 이미지 내에서 조건에 맞는 물품들을 모두 찾아라.\n"
+        "너는 로봇 명령을 YOLO 탐지 요청으로 변환하는 모듈이다.\n"
+        "카메라 이미지는 참고용이며, 가장 중요한 입력은 사용자 명령이다.\n"
+        "사용자 명령에 들어있는 물품명과 개수를 분석해서 로봇이 찾아야 할 물품 목록을 만들어라.\n"
         f"반드시 다음 제공된 리스트 내의 영문 클래스명만 선택해야 하며, 리스트에 없는 물품은 철저히 무시해라.\n"
         f"리스트: {TARGET_CLASSES}\n\n"
-        "개수가 명시되지 않은 경우 0으로 취급하라.\n"
+        "개수가 명시되지 않은 경우 iteration은 1로 취급하라.\n"
+        "사용자가 여러 물품을 말하면 각 물품을 모두 포함하라.\n"
+        "사용자가 리스트에 없는 물품만 말하면 빈 배열 []을 반환하라.\n"
         "출력은 반드시 아래 구조를 가진 JSON 배열(Array) 형식으로만 반환해야 한다.\n"
         "예시:\n"
         "[\n"
@@ -66,7 +97,6 @@ def get_target_from_gemini(cv_image, user_command):
             ],
             generation_config=genai.types.GenerationConfig(
                 temperature=0.0,
-                # 2. JSON 포맷으로 강제 출력 설정
                 response_mime_type="application/json", 
             ),
             request_options={"timeout": 15.0} 
@@ -77,16 +107,36 @@ def get_target_from_gemini(cv_image, user_command):
             return []
             
         text = response.text.strip()
+        ###debug
+        print("===== Gemini Raw Response =====")
+        print(text)
+        print("================================")
+        ###
         
-        # 3. JSON 문자열을 파이썬 리스트(List of Dicts)로 파싱
         parsed_data = json.loads(text)
+        if isinstance(parsed_data, dict):
+            parsed_data = [parsed_data]
+        if not isinstance(parsed_data, list):
+            print(f"[VLM 파싱 실패] JSON 배열이 아닙니다: {parsed_data}")
+            return []
         
         # 클래스명이 리스트에 있는지 한 번 더 검증 (안전 장치)
         valid_targets = []
         for item in parsed_data:
+            if not isinstance(item, dict):
+                print(f"[VLM 경고] 딕셔너리가 아닌 항목이 필터링 되었습니다: {item}")
+                continue
+
             c_name = item.get("class_name", "")
+            iteration = int(item.get("iteration", 1))
+            if iteration <= 0:
+                iteration = 1
+
             if c_name in TARGET_CLASSES:
-                valid_targets.append(item)
+                valid_targets.append({
+                    "class_name": c_name,
+                    "iteration": iteration,
+                })
             else:
                 print(f"[VLM 경고] 리스트에 없는 값이 필터링 되었습니다: '{c_name}'")
                 
@@ -127,6 +177,15 @@ class VlmLogicNode(Node):
             self.get_logger().error("아직 카메라 원본 영상이 들어오지 않았습니다.")
             return
 
+        # 키워드 매칭은 VLM 담당자 확인 전까지 비활성화.
+        # target_list = get_targets_from_keywords(user_command)
+        #
+        # if target_list:
+        #     self.get_logger().info(f"▶ 키워드 매칭 완료: {target_list}")
+        # else:
+        #     self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
+        #     target_list = get_target_from_gemini(self.latest_raw_image, user_command)
+
         self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
         target_list = get_target_from_gemini(self.latest_raw_image, user_command)
         
@@ -134,7 +193,7 @@ class VlmLogicNode(Node):
             self.get_logger().error("유효한 타겟을 찾지 못했거나 응답이 비어있습니다.")
             return
 
-        self.get_logger().info(f"▶ Gemini 파싱 완료: {target_list}")
+        self.get_logger().info(f"▶ 타겟 분석 완료: {target_list}")
 
         # =========================================================
         # 리스트(Array)로 묶어서 한 번에 전송
@@ -156,8 +215,8 @@ class VlmLogicNode(Node):
         
         # 3. Request 객체 생성 후 리스트 데이터 대입
         req = UserRequest.Request()
-        req.class_names = class_names_list
-        req.iterations = iterations_list
+        req.class_name = class_names_list
+        req.iteration = iterations_list
 
         # 4. 서비스 '한 번' 호출
         future = self.cli.call_async(req)
