@@ -132,6 +132,38 @@ api_keys.json
 # =========================
 tmp/
 temp/
-i.cache/
+.cache/
 
+# =========================
+# Generated robot description files
+# =========================
+generated/
+*_generated.urdf
+m0609_rg2.urdf
+onrobot_rg2_v1.urdf
+
+# =========================
+# Isaac Sim / Omniverse
+# =========================
+.isaac/
+.cache/
+.omniverse/
+kit/
+ov/
+isaac-sim/
+isaac_sim/
+*.usd
+*.usda
+*.usdc
+*.usdz
+*.mdl
+*.nvusd
+*.tmp.usd
+
+# Isaac Sim logs / caches
+isaac_sim_logs/
+omni_logs/
+
+
+# 예외 허용 파일
 !src/abc_perception/models/best.pt
