@@ -4,7 +4,7 @@ from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from std_msgs.msg import Int32
+from std_msgs.msg import String
 
 # 두산 로봇 및 그리퍼 관련
 import DR_init
@@ -39,7 +39,7 @@ class ScanBarcodeServer(Node):
 
         # 2. 주요 위치 정의 (전역 변수로 선언된 posj, posx 활용)
         self.pos_home = posj([0, 0, 135, 0, -45, 90])
-        self.pos_scanner = posx([408.0, 153.0, 342.0, 33.0, 180.0, 100.0])
+        self.pos_scanner = posx([408.0, -153.0, 342.0, 133.0, -172.0, -120.0])
         self.safe_z_offset = 100.0
 
         # 3. Scan_Barcode 액션 서버 생성
@@ -52,10 +52,10 @@ class ScanBarcodeServer(Node):
         )
 
         self.subscription = self.create_subscription(
-            Int32, 'scan_done', self.scan_callback, 10, callback_group=cb_group
+            String, 'scan_done', self.scan_callback, 10, callback_group=cb_group
         )
         self.is_scanned = False
-        self.received_product_id = -1
+        self.received_product_id = None
 
         self.get_logger().info("🚀 [Scan_Barcode] Scan Barcode 서버가 시작되었습니다.")
 
@@ -66,7 +66,7 @@ class ScanBarcodeServer(Node):
 
     def execute_callback(self, goal_handle):
         self.is_scanned = False
-        self.received_product_id = -1
+        self.received_product_id = None
         product_id = goal_handle.request.product_id
 
         self.get_logger().info(f"\n[Scan_Barcode 시작] 상품({product_id}) 스캐너로 이동합니다.")
