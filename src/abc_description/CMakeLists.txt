@@ -8,8 +8,6 @@ install(
     urdf
     meshes
     licenses
-    config
-    scripts
   DESTINATION share/${PROJECT_NAME}
 )
 
