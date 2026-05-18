@@ -9,6 +9,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
+from dotenv import load_dotenv
+import os
 import google.generativeai as genai
 
 from abc_interfaces.srv import UserRequest
@@ -21,7 +23,7 @@ TARGET_CLASSES = [
 
 def get_target_from_gemini(cv_image, user_command):
     # API 키 설정
-    api_key = "API Key을 넣어주세요"
+    api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
     
     # 모델 로드

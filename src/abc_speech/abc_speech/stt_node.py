@@ -94,6 +94,13 @@ class SttNode(Node):
     def stt_callback(self, request, response):
         self.get_logger().info(f"[STT 요청] {request.raw_text}")
 
+        # 테스트용: raw_text가 들어오면 마이크 없이 그대로 반환
+        if request.raw_text.strip():
+            response.success = True
+            response.recognized_text = request.raw_text.strip()
+            self.get_logger().info(f"[STT 테스트 결과] {response.recognized_text}")
+            return response
+        
         try:
             with self._mic as source:
                 self.get_logger().info("음성 입력 대기 중...")

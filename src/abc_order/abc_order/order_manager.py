@@ -42,29 +42,50 @@ class OrderManager(Node):
         services = [
             (self.stt_client, "/stt"),
             (self.parse_client, "/parse_order"),
-            (self.inventory_client, "/inventory/check"),
+            # (self.inventory_client, "/inventory/check"),
         ]
 
         for client, name in services:
             while not client.wait_for_service(timeout_sec=1.0):
                 self.get_logger().info(f"{name} service 대기 중...")
 
+    # def keyboard_loop(self):
+    #     while rclpy.ok():
+    #         cmd = input("주문 시작: s 입력 후 Enter > ").strip().lower()
+
+    #         self.get_logger().info(f"입력값=[{cmd}]")
+
+    #         if cmd == "s":
+    #             if self.is_processing:
+    #                 self.get_logger().warning("이미 주문 처리 중입니다.")
+    #                 continue
+
+    #             self.is_processing = True
+    #             self.start_order_flow()
+
+    #         elif cmd == "q":
+    #             self.get_logger().info("종료합니다.")
+    #             rclpy.shutdown()
+    #             break
     def keyboard_loop(self):
         while rclpy.ok():
-            cmd = input("주문 시작: s 입력 후 Enter > ").strip().lower()
+            cmd = input("주문 시작: s 입력 후 Enter > ")
+
+            print(f"RAW=[{repr(cmd)}]", flush=True)
+
+            cmd = cmd.strip().lower()
+
+            print(f"PARSED=[{repr(cmd)}]", flush=True)
 
             if cmd == "s":
+                print("S DETECTED", flush=True)
+
                 if self.is_processing:
-                    self.get_logger().warning("이미 주문 처리 중입니다.")
+                    print("already processing", flush=True)
                     continue
 
                 self.is_processing = True
                 self.start_order_flow()
-
-            elif cmd == "q":
-                self.get_logger().info("종료합니다.")
-                rclpy.shutdown()
-                break
 
     def publish_tts(self, text: str):
         msg = String()
@@ -76,7 +97,8 @@ class OrderManager(Node):
         self.publish_tts("주문을 말씀해주세요.")
 
         req = Stt.Request()
-        req.raw_text = "주문을 말씀해주세요."
+        # req.raw_text = "주문을 말씀해주세요."
+        req.raw_text = "초코파이 하나 줘"
 
         future = self.stt_client.call_async(req)
         future.add_done_callback(self.on_stt_response)
@@ -139,72 +161,72 @@ class OrderManager(Node):
             f"[재고 확인 요청] product_id={item.product_id}, quantity={item.quantity}"
         )
 
-        future = self.inventory_client.call_async(req)
-        future.add_done_callback(self.on_inventory_response)
+        # future = self.inventory_client.call_async(req)
+        # future.add_done_callback(self.on_inventory_response)
 
-    def on_inventory_response(self, future):
-        item = self.order_items[self.current_index]
+    # def on_inventory_response(self, future):
+    #     item = self.order_items[self.current_index]
 
-        try:
-            response = future.result()
-        except Exception as e:
-            self.get_logger().error(f"Inventory service 호출 실패: {e}")
-            self.publish_tts("재고 확인 중 오류가 발생했습니다.")
-            self.is_processing = False
-            return
+    #     try:
+    #         response = future.result()
+    #     except Exception as e:
+    #         self.get_logger().error(f"Inventory service 호출 실패: {e}")
+    #         self.publish_tts("재고 확인 중 오류가 발생했습니다.")
+    #         self.is_processing = False
+    #         return
 
-        self.inventory_results.append({
-            "product_id": item.product_id,
-            "quantity": item.quantity,
-            "available": response.available,
-            "current_quantity": response.current_quantity,
-            "message": response.message,
-        })
+    #     self.inventory_results.append({
+    #         "product_id": item.product_id,
+    #         "quantity": item.quantity,
+    #         "available": response.available,
+    #         "current_quantity": response.current_quantity,
+    #         "message": response.message,
+    #     })
 
-        self.current_index += 1
-        self.check_next_inventory()
+    #     self.current_index += 1
+    #     self.check_next_inventory()
 
-    def finish_inventory_check(self):
-        unavailable_items = [
-            item for item in self.inventory_results
-            if not item["available"]
-        ]
+    # def finish_inventory_check(self):
+    #     unavailable_items = [
+    #         item for item in self.inventory_results
+    #         if not item["available"]
+    #     ]
 
-        if unavailable_items:
-            messages = []
+    #     if unavailable_items:
+    #         messages = []
 
-            for item in unavailable_items:
-                messages.append(
-                    f"{item['product_id']}는 현재 {item['current_quantity']}개 남아 있어 "
-                    f"{item['quantity']}개 주문이 불가합니다."
-                )
+    #         for item in unavailable_items:
+    #             messages.append(
+    #                 f"{item['product_id']}는 현재 {item['current_quantity']}개 남아 있어 "
+    #                 f"{item['quantity']}개 주문이 불가합니다."
+    #             )
 
-            self.publish_tts(" ".join(messages) + " 다시 주문해주세요.")
-            self.is_processing = False
-            return
+    #         self.publish_tts(" ".join(messages) + " 다시 주문해주세요.")
+    #         self.is_processing = False
+    #         return
 
-        order_summary = ", ".join(
-            [
-                f"{item['product_id']} {item['quantity']}개"
-                for item in self.inventory_results
-            ]
-        )
+    #     order_summary = ", ".join(
+    #         [
+    #             f"{item['product_id']} {item['quantity']}개"
+    #             for item in self.inventory_results
+    #         ]
+    #     )
 
-        self.publish_tts(f"{order_summary} 주문이 확인되었습니다.")
+    #     self.publish_tts(f"{order_summary} 주문이 확인되었습니다.")
 
-        self.publish_confirmed_order()
+    #     self.publish_confirmed_order()
 
-        self.is_processing = False
+    #     self.is_processing = False
 
-    def publish_confirmed_order(self):
-        msg = OrderList()
-        msg.items = self.order_items
+    # def publish_confirmed_order(self):
+    #     msg = OrderList()
+    #     msg.items = self.order_items
 
-        self.vlm_pub.publish(msg)
+    #     self.vlm_pub.publish(msg)
 
-        self.get_logger().info(
-            "[VLM 전달] 최종 주문 publish 완료"
-        )
+    #     self.get_logger().info(
+    #         "[VLM 전달] 최종 주문 publish 완료"
+    #     )
 
 def main(args=None):
     rclpy.init(args=args)
