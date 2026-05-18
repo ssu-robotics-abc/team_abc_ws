@@ -1,0 +1,13 @@
+# RG2 mounting config for Doosan M0609
+# 단위: meter, radian
+# Isaac Sim에서 방향이 틀어지면 rpy만 바꿔서 colcon build 다시 하면 됩니다.
+rg2_mount:
+  parent_link: "tool0"
+  xyz: "0 0 0"
+  rpy: "0 0 0"
+
+# 자주 시도하는 후보값
+# rpy: "1.5708 0 0"
+# rpy: "0 1.5708 0"
+# rpy: "0 0 1.5708"
+# rpy: "1.5708 -1.5708 0"
