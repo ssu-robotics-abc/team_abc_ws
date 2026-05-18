@@ -152,7 +152,7 @@ kit/
 ov/
 isaac-sim/
 isaac_sim/
-*.usd
+# *.usd
 *.usda
 *.usdc
 *.usdz
