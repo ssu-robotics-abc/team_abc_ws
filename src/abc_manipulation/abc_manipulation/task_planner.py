@@ -12,7 +12,7 @@ class TaskPlannerNode(Node):
         super().__init__('task_planner_node')
         self.cb_group = ReentrantCallbackGroup()
 
-        # 클라이언트 설정 (돌려볼 로직 주석처리 하면서 테스트)
+        # 클라이언트 설정
         self.pick_client = ActionClient(self, PickItem, 'pick_item', callback_group=self.cb_group)
         self.scan_client = ActionClient(self, ScanBarcode, 'scan_barcode', callback_group=self.cb_group)
         self.place_client = ActionClient(self, PlaceItem, 'place_item', callback_group=self.cb_group)
@@ -46,32 +46,46 @@ class TaskPlannerNode(Node):
             if res1 and res1.success:
                 self.get_logger().info("Pick_item 성공! 물체를 잡았습니다.")
                 
-                # =========================================================
-                # 3. PlaceItem 노드 통신 (현재 테스트를 위해 주석 처리됨)
-                # =========================================================
-                # self.get_logger().info(">> Place 서버 연결 대기...")
-                # if not self.place_client.wait_for_server(timeout_sec=20):
-                #     self.get_logger().error("Place 서버가 오프라인입니다.")
-                #     break
-                # 
-                # self.get_logger().info(">> place_item 노드 호출: 분류 이송 및 물체 놓기 명령")
-                # 
-                # # Scan 결과가 맞다고 가정하고(is_corrected=True) 판매대로 놓기 테스트
-                # goal_msg_place = PlaceItem.Goal(is_corrected=True)
-                # 
-                # # 결과 응답 대기
-                # res3 = await self.call_action(self.place_client, goal_msg_place)
-                # 
-                # if res3 and res3.success:
-                #     self.get_logger().info("Place_item 성공! 물체를 지정된 장소에 놓았습니다.")
-                # else:
-                #     self.get_logger().error("Place_item 실패")
-                #     break
-                # =========================================================
+                self.get_logger().info(" Scan 서버 연결 대기...")
+                if not self.scan_client.wait_for_server(timeout_sec=20):
+                    self.get_logger().error("Scan 서버가 오프라인입니다.")
+                    break
 
+                self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
+                goal_msg_scan = ScanBarcode.Goal(product_id=str(item.product_id))
+
+                res2 = await self.call_action(self.scan_client, goal_msg_scan)
+
+                if res2 and res2.success:
+                    # 스캔 일치 여부 확인
+                    is_match = res2.is_corrected
+                    match_result = "일치: 판매대" if is_match else "불일치: 반품대"
+
+                    # 3. PlaceItem 노드 통신 
+                    self.get_logger().info(">> Place 서버 연결 대기...")
+                    if not self.place_client.wait_for_server(timeout_sec=20):
+                        self.get_logger().error("Place 서버가 오프라인입니다.")
+                        break
+                    
+                    self.get_logger().info(">> place_item 노드 호출: 분류 이송 및 물체 놓기 명령")
+                     
+                    # Scan 결과에 따른 물품 이동
+                    goal_msg_place = PlaceItem.Goal(is_corrected=is_match)
+                     
+                    # 결과 응답 대기
+                    res3 = await self.call_action(self.place_client, goal_msg_place)
+                     
+                    if res3 and res3.success:
+                        self.get_logger().info("Place_item 성공! 물체를 지정된 장소에 놓았습니다.")
+                    else:
+                        self.get_logger().error("Place_item 실패")
+                        break
+                else:
+                    self.get_logger().error("Scan_barcode 실패")
+                    break
             else:
                 self.get_logger().error("Pick_item 실패")
-            break
+                break
 
         self.get_logger().info("==== 모든 테스트 종료 ====")
 

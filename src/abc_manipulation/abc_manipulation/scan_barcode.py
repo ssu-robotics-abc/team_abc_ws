@@ -102,7 +102,7 @@ class ScanBarcodeServer(Node):
                 self.get_logger().warn("⚠️ [경고] 스캔 타임아웃 발생!")
                 break
             
-            time.sleep(0.1)
+            wait(0.1)
 
         # 최종 성공 반환
         result = ScanBarcode.Result()
