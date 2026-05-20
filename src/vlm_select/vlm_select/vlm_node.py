@@ -8,6 +8,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
+from dotenv import load_dotenv
+import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -53,6 +55,7 @@ load_dotenv(dotenv_path=env_path)
 
 
 def get_target_from_gemini(cv_image, user_command):
+
     cv_image = cv2.resize(cv_image, (640, 480))
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key is None:
