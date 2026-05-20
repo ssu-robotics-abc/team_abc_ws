@@ -118,6 +118,8 @@ class PickItemServer(Node):
 
         self.get_logger().info(f"[액션 수신] 탐색 목표 설정: {target_name}")
         
+        self.action_done_event.clear()
+
         # 물품 이름 전달
         self.target_object = target_name
 
@@ -163,6 +165,8 @@ class PickItemServer(Node):
         movej(self.JReady, VELOCITY, ACC)
         self.is_picking = False
         print(">>> 작업 완료.")
+
+        self.action_done_event.set()
 
     def run(self):
         executor = rclpy.executors.MultiThreadedExecutor()
