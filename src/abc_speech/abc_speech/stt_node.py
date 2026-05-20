@@ -10,21 +10,21 @@ class SttNode(Node):
     def __init__(self):
         super().__init__("stt_node")
 
-        self.declare_parameter("language",          "ko-KR")
-        self.declare_parameter("device_index",      -1)
-        self.declare_parameter("energy_threshold",  50.0)
-        self.declare_parameter("pause_threshold",   0.8)
+        self.declare_parameter("language", "ko-KR")
+        self.declare_parameter("device_index", -1)
+        self.declare_parameter("energy_threshold", 50.0)
+        self.declare_parameter("pause_threshold", 0.8)
         self.declare_parameter("phrase_time_limit", 5.0)
-        self.declare_parameter("dynamic_energy",    True)
-        self.declare_parameter("ambient_duration",  2.0)
+        self.declare_parameter("dynamic_energy", True)
+        self.declare_parameter("ambient_duration", 2.0)
 
-        self._lang        = self.get_parameter("language").get_parameter_value().string_value
-        self._device_idx  = self.get_parameter("device_index").get_parameter_value().integer_value
-        energy_thresh     = self.get_parameter("energy_threshold").get_parameter_value().double_value
-        pause_thresh      = self.get_parameter("pause_threshold").get_parameter_value().double_value
-        self._phrase_lim  = self.get_parameter("phrase_time_limit").get_parameter_value().double_value
-        dynamic_energy    = self.get_parameter("dynamic_energy").get_parameter_value().bool_value
-        ambient_duration  = self.get_parameter("ambient_duration").get_parameter_value().double_value
+        self._lang = self.get_parameter("language").get_parameter_value().string_value
+        self._device_idx = self.get_parameter("device_index").get_parameter_value().integer_value
+        energy_thresh = self.get_parameter("energy_threshold").get_parameter_value().double_value
+        pause_thresh = self.get_parameter("pause_threshold").get_parameter_value().double_value
+        self._phrase_lim = self.get_parameter("phrase_time_limit").get_parameter_value().double_value
+        dynamic_energy = self.get_parameter("dynamic_energy").get_parameter_value().bool_value
+        ambient_duration = self.get_parameter("ambient_duration").get_parameter_value().double_value
 
         self._recognizer = sr.Recognizer()
         self._recognizer.energy_threshold = energy_thresh
@@ -34,6 +34,7 @@ class SttNode(Node):
         self._log_devices()
 
         device = self._device_idx if self._device_idx >= 0 else None
+
         try:
             self._mic = sr.Microphone(device_index=device)
         except Exception as e:
@@ -41,108 +42,90 @@ class SttNode(Node):
             raise
 
         with self._mic as source:
-            self.get_logger().info(f"주변 소음 측정 중 ({ambient_duration:.1f}s) ...")
-            self._recognizer.adjust_for_ambient_noise(source, duration=ambient_duration)
+            self.get_logger().info(f"주변 소음 측정 중 ({ambient_duration:.1f}s)...")
+            self._recognizer.adjust_for_ambient_noise(
+                source,
+                duration=ambient_duration
+            )
             self.get_logger().info(
                 f"energy_threshold={self._recognizer.energy_threshold:.1f}"
             )
 
-        self._srv = self.create_service(Stt, "/stt", self.stt_callback)
-    
-        # self._stop_listen = self._recognizer.listen_in_background(
-        #     self._mic, self._on_audio, phrase_time_limit=self._phrase_lim,
-        # )
+        # service client
+        self._client = self.create_client(Stt, "/stt_result")
 
-        self.get_logger().info(
-            f"STT 준비 완료  언어={self._lang}  device_index={self._device_idx}  "
-            f"phrase_time_limit={self._phrase_lim:.1f}s"
+        while not self._client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info("STT service waiting...")
+
+        # background listening
+        self._stop_listen = self._recognizer.listen_in_background(
+            self._mic,
+            self._on_audio,
+            phrase_time_limit=self._phrase_lim,
         )
+
+        self.get_logger().info("STT client 준비 완료")
 
     def _log_devices(self):
         self.get_logger().info("=== 마이크 장치 목록 ===")
         for idx, name in enumerate(sr.Microphone.list_microphone_names()):
             mark = " ◀" if idx == self._device_idx else ""
-            self.get_logger().info(f"  [{idx}] {name}{mark}")
+            self.get_logger().info(f"[{idx}] {name}{mark}")
 
-    # def _on_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData):
-    #     try:
-    #         text = recognizer.recognize_google(audio, language=self._lang)
-    #     except sr.UnknownValueError:
-    #         return
-    #     except sr.RequestError as e:
-    #         self.get_logger().warning(f"Google STT 요청 실패: {e}")
-    #         return
-
-    #     text = (text or "").strip()
-    #     if not text:
-    #         return
-
-    #     self.get_logger().info(f"[STT] {text}")
-    #     msg = String()
-    #     msg.data = text
-    #     self._pub.publish(msg)
-
-    # def destroy_node(self):
-    #     stop = getattr(self, "_stop_listen", None)
-    #     if stop is not None:
-    #         try:
-    #             stop(wait_for_stop=False)
-    #         except Exception:
-    #             pass
-    #     super().destroy_node()
-    
-    def stt_callback(self, request, response):
-        self.get_logger().info(f"[STT 요청] {request.raw_text}")
-
-        # 테스트용: raw_text가 들어오면 마이크 없이 그대로 반환
-        if request.raw_text.strip():
-            response.success = True
-            response.recognized_text = request.raw_text.strip()
-            self.get_logger().info(f"[STT 테스트 결과] {response.recognized_text}")
-            return response
-        
+    def _on_audio(self, recognizer, audio):
         try:
-            with self._mic as source:
-                self.get_logger().info("음성 입력 대기 중...")
-                audio = self._recognizer.listen(
-                    source,
-                    timeout=10,
-                    phrase_time_limit=self._phrase_lim,
-                )
+            text = recognizer.recognize_google(
+                audio,
+                language=self._lang
+            ).strip()
 
-            text = self._recognizer.recognize_google(audio, language=self._lang).strip()
+            if not text:
+                return
 
-            response.success = True
-            response.recognized_text = text
             self.get_logger().info(f"[STT 결과] {text}")
 
-        except sr.WaitTimeoutError:
-            response.success = False
-            response.recognized_text = ""
-            self.get_logger().warning("입력 시간 초과")
-            
+            req = Stt.Request()
+            req.raw_text = text
+
+            future = self._client.call_async(req)
+            future.add_done_callback(self._service_response_callback)
+
         except sr.UnknownValueError:
-            response.success = False
-            response.recognized_text = ""
             self.get_logger().warning("음성을 인식하지 못했습니다.")
 
         except sr.RequestError as e:
-            response.success = False
-            response.recognized_text = ""
             self.get_logger().error(f"Google STT 요청 실패: {e}")
 
         except Exception as e:
-            response.success = False
-            response.recognized_text = ""
             self.get_logger().error(f"STT 실패: {e}")
-        
 
-        return response
+    def _service_response_callback(self, future):
+        try:
+            response = future.result()
+
+            if response.success:
+                self.get_logger().info("service request 성공")
+            else:
+                self.get_logger().warning("service request 실패")
+
+        except Exception as e:
+            self.get_logger().error(f"service call 실패: {e}")
+
+    def destroy_node(self):
+        if hasattr(self, "_stop_listen"):
+            try:
+                self._stop_listen(wait_for_stop=False)
+            except Exception:
+                pass
+
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
+
     node = SttNode()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

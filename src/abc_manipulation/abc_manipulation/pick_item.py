@@ -1,7 +1,5 @@
 import os
-import cv2
 import rclpy
-import time
 import threading
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -11,7 +9,20 @@ from abc_manipulation.onrobot import RG
 from ament_index_python.packages import get_package_share_directory
 import DR_init
 
-from abc_interfaces.msg import DetectionArray 
+from abc_interfaces.msg import DetectionArray
+from rclpy.node import Node
+from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from abc_interfaces.action import PickItem
+
+# 클라이언트의 product_id와 비전의 클래스 이름 매핑 정보(임시)
+PRODUCT_MAP = {
+    1234: 'chocopie',
+    5678: 'pepsi',
+    2345: 'pocarisweat',
+    # 임시 물품들
+}
 
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
@@ -37,13 +48,16 @@ except ImportError:
 # ======================
 # 2. 수평 집기 파라미터 설정
 # ======================
-X_OFFSET           = 185.0   # 그리퍼 중심 보정 (mm)
-SIDE_APPROACH_DIST = 100.0   # 물체 정면 대기 거리 (mm)
-SAFE_Z             = 400.0   # 이동 안전 높이
-SQUEEZE_RATIO      = 0.95    # 파지 보정 (박스 재질 고려)
+X_OFFSET = 185.0            # 그리퍼 중심 보정 (mm)
+SIDE_APPROACH_DIST = 100.0  # 물체 정면 대기 거리 (mm)
+SAFE_Z = 400.0              # 이동 안전 높이
+SQUEEZE_RATIO = 0.95        # 파지 보정 (박스 재질 고려)
 
-class TestNode:
+class PickItemServer(Node):
     def __init__(self):
+        super().__init__('pick_item_server')
+        cb_group = ReentrantCallbackGroup()
+
         self.img_node = ImgNode()
         print("카메라 및 비전 파라미터 대기 중...")
         while rclpy.ok() and self.img_node.get_camera_intrinsic() is None:
@@ -64,9 +78,20 @@ class TestNode:
         self.gripper = RG("rg2", "192.168.1.1", 502)
 
         self.JReady = posj([0, 0, 135, 0, -45, 90])
-        self.home_pose = None  
-        self.target_object = None  
+        self.home_pose = None
+        self.target_object = None
         self.is_picking = False
+        self.action_done_event = threading.Event()
+
+        # 액션 서버 생성
+        self._action_server = ActionServer(
+            self,
+            PickItem,
+            'pick_item',
+            self.execute_callback,
+            callback_group=cb_group
+        )
+        self.get_logger().info("pick_item 서버가 시작되었습니다.")
 
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
@@ -82,18 +107,33 @@ class TestNode:
         td_coord = base2cam @ coord
         return td_coord[:3]
 
-    def input_command_thread(self):
-        valid_classes = ['chocopie', 'Kancho', 'pepero_almond', 'pepero_original', 'pepsi', 'pocarisweat', 'soy_milk']
-        while rclpy.ok():
-            cmd = input(f"\n[명령 대기] {valid_classes}\n대상 입력 > ").strip()
-            if cmd in valid_classes:
-                self.target_object = cmd
+    def execute_callback(self, goal_handle):
+        target_id = goal_handle.request.product_id
+        target_name = PRODUCT_MAP.get(target_id)
 
-    def pick_and_place(self, x, y, z, target_width):
+        if not target_name:
+            self.get_logger().error("알 수 없는 물품 ID입니다.")
+            goal_handle.abort()
+            return PickItem.Result(success=False)
+
+        self.get_logger().info(f"[액션 수신] 탐색 목표 설정: {target_name}")
+        
+        # 물품 이름 전달
+        self.target_object = target_name
+
+        # 파지 작업 완료 대기
+        self.action_done_event.wait() 
+
+        # 성공 처리
+        goal_handle.succeed()
+        self.get_logger().info(">>> 작업 완료 및 통신 성공")
+        return PickItem.Result(success=True)
+
+    def pick_and_place(self, x, y, z, target_width, target_name):
         cur = get_current_posx()[0]
         fixed_rx, fixed_ry, fixed_rz = cur[3:]
+        print(f"\n>>> {target_name} 수평 집기 수행")
         
-        print(f"\n>>> {self.target_object} 수평 집기 수행")
         hx, hy, hz, hrx, hry, hrz = self.home_pose
         self.gripper.open_gripper()
         
@@ -108,8 +148,8 @@ class TestNode:
         
         # 3. 파지
         print(f"[파지] 목표 너비: {target_width/10:.1f}mm")
-        self.gripper.move_gripper(width_val=target_width) 
-        time.sleep(1.2) 
+        self.gripper.move_gripper(width_val=target_width)
+        wait(1.2)
 
         # 4. 후퇴 (뒤로 빠지기)
         movel(posx([wait_x, y, z, fixed_rx, fixed_ry, fixed_rz]), VELOCITY, ACC)
@@ -119,17 +159,16 @@ class TestNode:
         movel(posx([hx, hy, SAFE_Z, hrx, hry, hrz]), VELOCITY, ACC)
         
         # 6. 초기화
-        time.sleep(1.0)
+        wait(1.0)
         movej(self.JReady, VELOCITY, ACC)
-        
         self.is_picking = False
         print(">>> 작업 완료.")
 
     def run(self):
         executor = rclpy.executors.MultiThreadedExecutor()
+        executor.add_node(self)
         executor.add_node(self.img_node)
         threading.Thread(target=executor.spin, daemon=True).start()
-        threading.Thread(target=self.input_command_thread, daemon=True).start()
 
         movej(self.JReady, VELOCITY, ACC)
         wait(1.0)
@@ -142,16 +181,14 @@ class TestNode:
             depth_frame = self.img_node.get_depth_frame()
             detection_msg = self.img_node.get_latest_detection_msg()
 
-            
-
             # 타겟 물체가 지정되었고, 현재 작업 중이 아닐 때만 실행
             if self.target_object is not None and not self.is_picking and detection_msg is not None:
                 for obj in detection_msg.detections:
                     if obj.class_name == self.target_object and obj.confidence >= 0.6:
                         cx, cy = int(obj.center_x), int(obj.center_y)
-                        
                         z_dist = depth_frame[cy, cx]
-                        if z_dist == 0: continue
+                        if z_dist == 0: 
+                            continue
 
                         capture_pose = get_current_posx()[0]
                         fx, fy = self.intrinsics["fx"], self.intrinsics["fy"]
@@ -168,15 +205,19 @@ class TestNode:
                         print(f"\n\n[Found] {obj.class_name} | Dist: {z_dist:.1f}mm | Base: {base_xyz}")
                         
                         self.is_picking = True
-                        self.target_object = None 
-                        threading.Thread(target=self.pick_and_place, args=(*base_xyz, target_w), daemon=True).start()
+                        current_target = self.target_object
+                        self.target_object = None
+                        
+                        threading.Thread(
+                            target=self.pick_and_place, 
+                            args=(*base_xyz, target_w, current_target), 
+                            daemon=True
+                        ).start()
                         break
-
-
 
 def main():
     try:
-        test = TestNode()
+        test = PickItemServer()
         test.run()
     except KeyboardInterrupt:
         print("\n종료")

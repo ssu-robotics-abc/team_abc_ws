@@ -22,9 +22,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/PickItem.action"
   "action/ScanBarcode.action"
   "action/PlaceItem.action"
+<<<<<<< HEAD
   "srv/CheckInventory.srv"
   "srv/ParseOrder.srv"
   "srv/Stt.srv"
+=======
+>>>>>>> origin/main
   "srv/UserRequest.srv"
   DEPENDENCIES 
     std_msgs 

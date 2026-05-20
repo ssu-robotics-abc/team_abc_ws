@@ -39,7 +39,6 @@ setup(
             'vlm_command_node = vlm_select.vlm_command_node:main',
             'yolo_detector_node = vlm_select.yolo_detector_node:main',
             'vlm_api_yolo = vlm_select.vlm_api_yolo:main',
-            'parse_order_server = vlm_select.parse_order_server:main'
         ],
     },
 )

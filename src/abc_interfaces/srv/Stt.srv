@@ -1,4 +1,3 @@
 string raw_text
 ---
 bool success
-string recognized_text
