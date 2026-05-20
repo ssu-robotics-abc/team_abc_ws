@@ -4,17 +4,16 @@ import os
 import json
 import cv2
 import rclpy
+import requests
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
 from cv_bridge import CvBridge
-from dotenv import load_dotenv
-import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# abc_interfaces 패키지의 UserRequest 서비스 임포트
-from abc_interfaces.srv import UserRequest
+# abc_interfaces 패키지의 서비스 임포트
+# (Stt 서비스도 동일한 패키지에 존재한다고 가정합니다)
+from abc_interfaces.srv import UserRequest, Stt
 
 # 설정 파라미터
 TARGET_CLASSES = [
@@ -22,40 +21,12 @@ TARGET_CLASSES = [
     "soy_milk", "chocopie", "pepero_almond"
 ]
 
-# KEYWORD_MAP = {
-#     "칸초": "Kancho", "칸쵸": "Kancho",
-#     "오리지널 빼빼로": "pepero_original", "빼빼로": "pepero_original",
-#     "펩시": "pepsi", "콜라": "pepsi",
-#     "포카리스웨트": "pocarisweat", "포카리": "pocarisweat",
-#     "소이밀크": "soy_milk", "두유": "soy_milk",
-#     "초코파이": "chocopie",
-#     "아몬드 빼빼로": "pepero_almond", "아몬드": "pepero_almond",
-# }
-
 # .env 파일 로드 (환경 변수 적용)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, '.env')
 load_dotenv(dotenv_path=env_path)
 
-
-# def get_targets_from_keywords(user_command):
-#     targets = []
-#     selected_classes = set()
-#     remaining_command = user_command
-#
-#     for kr_word in sorted(KEYWORD_MAP, key=len, reverse=True):
-#         if kr_word in remaining_command:
-#             class_name = KEYWORD_MAP[kr_word]
-#             if class_name not in selected_classes:
-#                 targets.append({"class_name": class_name, "iteration": 1})
-#                 selected_classes.add(class_name)
-#             remaining_command = remaining_command.replace(kr_word, " ")
-#
-#     return targets
-
-
 def get_target_from_gemini(cv_image, user_command):
-
     cv_image = cv2.resize(cv_image, (640, 480))
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key is None:
@@ -71,9 +42,6 @@ def get_target_from_gemini(cv_image, user_command):
         return None
     image_bytes = buf.tobytes()
 
-    # ==========================================
-    # 1. 다중 물품 처리를 위한 프롬프트 수정
-    # ==========================================
     prompt = (
         "너는 로봇 명령을 YOLO 탐지 요청으로 변환하는 모듈이다.\n"
         "카메라 이미지는 참고용이며, 가장 중요한 입력은 사용자 명령이다.\n"
@@ -110,11 +78,9 @@ def get_target_from_gemini(cv_image, user_command):
             return []
             
         text = response.text.strip()
-        ###debug
         print("===== Gemini Raw Response =====")
         print(text)
         print("================================")
-        ###
         
         parsed_data = json.loads(text)
         if isinstance(parsed_data, dict):
@@ -123,13 +89,10 @@ def get_target_from_gemini(cv_image, user_command):
             print(f"[VLM 파싱 실패] JSON 배열이 아닙니다: {parsed_data}")
             return []
         
-        # 클래스명이 리스트에 있는지 한 번 더 검증 (안전 장치)
         valid_targets = []
         for item in parsed_data:
             if not isinstance(item, dict):
-                print(f"[VLM 경고] 딕셔너리가 아닌 항목이 필터링 되었습니다: {item}")
                 continue
-
             c_name = item.get("class_name", "")
             iteration = int(item.get("iteration", 1))
             if iteration <= 0:
@@ -140,17 +103,30 @@ def get_target_from_gemini(cv_image, user_command):
                     "class_name": c_name,
                     "iteration": iteration,
                 })
-            else:
-                print(f"[VLM 경고] 리스트에 없는 값이 필터링 되었습니다: '{c_name}'")
                 
         return valid_targets
 
     except json.JSONDecodeError as e:
-        print(f"\n[VLM 파싱 실패] JSON 형식이 올바르지 않습니다: {e}\n응답 데이터: {text}\n")
+        print(f"\n[VLM 파싱 실패] JSON 형식이 올바르지 않습니다: {e}\n")
         return []
     except Exception as e:
         print(f"\n[VLM SDK 통신 실패] {e}\n")
         return []
+
+def check_stock_from_db(class_name):
+    """
+    HTTP GET 요청을 통해 DB에서 재고를 조회합니다.
+    """
+    url = f"http://127.0.0.1:8000/api/v1/stock/{class_name}"
+    try:
+        response = requests.get(url, timeout=5.0)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return None
+    except Exception as e:
+        print(f"[DB 통신 오류] {e}")
+        return None
 
 
 class VlmLogicNode(Node):
@@ -159,12 +135,17 @@ class VlmLogicNode(Node):
         self.bridge = CvBridge()
         self.latest_raw_image = None
 
+        # 카메라 이미지 구독
         self.create_subscription(Image, "/camera/camera/color/image_raw", self.raw_image_callback, 10)
-        self.create_subscription(String, "/vlm_user_command", self.command_callback, 10)
 
-        self.cli = self.create_client(UserRequest, "/vlm_request")
+        # 1. 터미널 명령(Topic) 대신 STT 결과를 받는 서비스 서버 생성
+        self.stt_srv = self.create_service(Stt, "/stt_results", self.stt_callback)
 
-        self.get_logger().info("VLM Logic 노드 가동 완료. 명령 대기 중...")
+        # 2. VLM 요청(성공 시 바코드 리스트) 및 TTS 요청(부족 시 클래스 리스트) 클라이언트
+        self.vlm_cli = self.create_client(UserRequest, "/vlm_request")
+        self.tts_cli = self.create_client(UserRequest, "/vlm_to_tts")
+
+        self.get_logger().info("VLM Logic 노드 가동 완료. STT 명령 수신 대기 중...")
 
     def raw_image_callback(self, msg):
         try:
@@ -172,71 +153,116 @@ class VlmLogicNode(Node):
         except Exception:
             pass
 
-    def command_callback(self, msg):
-        user_command = msg.data.strip()
-        self.get_logger().info(f"\n[{user_command}] 명령 수신됨. 다중 타겟 분석 시작...")
+    def stt_callback(self, request, response):
+        """
+        /stt_results 서비스 요청이 들어왔을 때 실행되는 메인 콜백 함수입니다.
+        """
+        if not request.success:
+            self.get_logger().error("STT 노드에서 인식 실패 상태를 전달받았습니다.")
+            return response
+
+        user_command = request.raw_text.strip()
+        self.get_logger().info(f"\n[음성 인식 결과: '{user_command}'] 다중 타겟 분석 시작...")
 
         if self.latest_raw_image is None:
             self.get_logger().error("아직 카메라 원본 영상이 들어오지 않았습니다.")
-            return
-
-        # 키워드 매칭은 VLM 담당자 확인 전까지 비활성화.
-        # target_list = get_targets_from_keywords(user_command)
-        #
-        # if target_list:
-        #     self.get_logger().info(f"▶ 키워드 매칭 완료: {target_list}")
-        # else:
-        #     self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
-        #     target_list = get_target_from_gemini(self.latest_raw_image, user_command)
+            return response
 
         self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
         target_list = get_target_from_gemini(self.latest_raw_image, user_command)
         
         if not target_list:
             self.get_logger().error("유효한 타겟을 찾지 못했거나 응답이 비어있습니다.")
-            return
+            return response
 
         self.get_logger().info(f"▶ 타겟 분석 완료: {target_list}")
 
-        # =========================================================
-        # 리스트(Array)로 묶어서 한 번에 전송
-        # =========================================================
-        class_names_list = []
-        iterations_list = []
+        # 리스트 추적용 변수 초기화
+        insufficient_classes = []
+        insufficient_stocks = []
+        
+        valid_barcodes = []
+        valid_iterations = []
+        
+        is_any_stock_insufficient = False
 
-        # 1. 파싱된 딕셔너리 리스트에서 데이터를 뽑아 각각의 배열로 만듭니다.
+        # DB 재고 확인 로직 수행
         for target in target_list:
-            class_names_list.append(target["class_name"])
-            iterations_list.append(int(target["iteration"]))
+            c_name = target["class_name"]
+            req_qty = int(target["iteration"])
+            
+            db_res = check_stock_from_db(c_name)
+            
+            if db_res is None:
+                self.get_logger().error(f"[{c_name}] DB 정보를 불러오지 못했습니다. 재고 부족으로 간주합니다.")
+                is_any_stock_insufficient = True
+                insufficient_classes.append(c_name)
+                insufficient_stocks.append(0)
+                continue
+                
+            stock = db_res.get("remaining_stock", 0)
+            barcode = db_res.get("barcode_data", "")
+            
+            if req_qty > stock:
+                # 하나라도 재고가 부족하다면 플래그를 변경하고 부족한 상품 리스트에 추가
+                is_any_stock_insufficient = True
+                insufficient_classes.append(c_name)
+                insufficient_stocks.append(stock)
+            else:
+                # 재고가 충분한 상품은 바코드 데이터로 변환하여 리스트업
+                valid_barcodes.append(barcode)
+                valid_iterations.append(req_qty)
 
-        # 2. 서비스 서버가 준비되었는지 확인
-        if not self.cli.wait_for_service(timeout_sec=2.0):
+        # 재고 수량 비교 후 분기 처리
+        if is_any_stock_insufficient:
+            self._send_tts_request(insufficient_classes, insufficient_stocks)
+        else:
+            self._send_vlm_request(valid_barcodes, valid_iterations)
+
+        return response
+
+    def _send_tts_request(self, classes, stocks):
+        """재고 부족 시 부족한 상품의 정보만 TTS 서비스로 전달"""
+        if not self.tts_cli.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error("서비스 서버(/vlm_to_tts)가 준비되지 않았습니다.")
+            return
+
+        self.get_logger().warn(
+            f"▶ 재고 부족 상품 발생. TTS 서비스 요청 전송 중... [물품: {classes}, DB잔여재고: {stocks}]"
+        )
+        
+        req = UserRequest.Request()
+        req.class_name = classes
+        req.iteration = stocks
+
+        future = self.tts_cli.call_async(req)
+        future.add_done_callback(lambda f: self.response_callback(f, "TTS"))
+
+    def _send_vlm_request(self, barcodes, iterations):
+        """모든 재고가 충분할 시 바코드 기반으로 메인 서비스에 전달"""
+        if not self.vlm_cli.wait_for_service(timeout_sec=2.0):
             self.get_logger().error("서비스 서버(/vlm_request)가 준비되지 않았습니다.")
             return
 
-        self.get_logger().info(f"▶ 일괄 서비스 요청 전송 중... [물품: {class_names_list}, 개수: {iterations_list}]")
+        self.get_logger().info(
+            f"▶ 모든 재고 충분. VLM 서비스 요청 전송 중... [바코드: {barcodes}, 개수: {iterations}]"
+        )
         
-        # 3. Request 객체 생성 후 리스트 데이터 대입
         req = UserRequest.Request()
-        req.class_name = class_names_list
-        req.iteration = iterations_list
+        req.class_name = barcodes
+        req.iteration = iterations
 
-        # 4. 서비스 '한 번' 호출
-        future = self.cli.call_async(req)
-        
-        # 5. 여러 번 보낼 필요가 없으므로 콜백도 단순해집니다.
-        future.add_done_callback(self.response_callback)
+        future = self.vlm_cli.call_async(req)
+        future.add_done_callback(lambda f: self.response_callback(f, "VLM"))
 
-    # 콜백 함수도 단순하게 원상복구
-    def response_callback(self, future):
+    def response_callback(self, future, node_type):
         try:
             response = future.result()
             self.get_logger().info(
-                f"✅ 서비스 응답 수신! [성공 여부: {response.success}, 메시지: {response.message}]"
+                f"✅ {node_type} 서비스 응답 수신! [성공 여부: {response.success}, 메시지: {response.message}]"
             )
         except Exception as e:
-            self.get_logger().error(f"❌ 서비스 호출 실패: {e}")
-
+            self.get_logger().error(f"❌ {node_type} 서비스 호출 실패: {e}")
 
 def main(args=None):
     rclpy.init(args=args)
