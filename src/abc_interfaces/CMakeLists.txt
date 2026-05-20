@@ -17,17 +17,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PurchaseItem.msg"
   "msg/DetectedObject.msg"
   "msg/DetectionArray.msg"
-  "msg/OrderItem.msg"
-  "msg/OrderList.msg"
   "action/PickItem.action"
   "action/ScanBarcode.action"
   "action/PlaceItem.action"
-<<<<<<< HEAD
   "srv/CheckInventory.srv"
-  "srv/ParseOrder.srv"
   "srv/Stt.srv"
-=======
->>>>>>> origin/main
   "srv/UserRequest.srv"
   DEPENDENCIES 
     std_msgs 

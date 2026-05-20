@@ -1,2 +1,0 @@
-string product_id
-int32 quantity
