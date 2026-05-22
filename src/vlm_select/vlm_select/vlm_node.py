@@ -198,15 +198,15 @@ class VlmLogicNode(Node):
         """
         /stt_results 서비스 요청을 처리한다.
         request.raw_text : STT로 인식된 사용자 명령 문자열
-        request.success  : STT 인식 성공 여부
         """
-        if not request.success:
-            self.get_logger().warn("STT 인식 실패 플래그 수신. 명령을 무시합니다.")
+        user_command = request.raw_text.strip()
+
+        if not user_command:
+            self.get_logger().warn("빈 STT 명령 수신. 무시합니다.")
             response.success = False
-            response.message = "STT 인식에 실패하여 명령을 처리하지 않았습니다."
+            response.message = "빈 명령입니다."
             return response
 
-        user_command = request.raw_text.strip()
         self.get_logger().info(f"\n[{user_command}] STT 명령 수신됨. 타겟 분석 시작...")
 
         if self.latest_raw_image is None:
