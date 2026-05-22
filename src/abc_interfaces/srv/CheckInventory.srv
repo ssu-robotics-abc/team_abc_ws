@@ -1,0 +1,6 @@
+string item_name
+int32 quantity
+---
+bool available
+int32 current_quantity
+string message
