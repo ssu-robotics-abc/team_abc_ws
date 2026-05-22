@@ -4,7 +4,7 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-from abc_interfaces.msg import PurchaseItem, DetectionArray
+from abc_interfaces.msg import DetectionArray
 from abc_interfaces.action import PickItem, ScanBarcode, PlaceItem
 
 class TaskPlannerNode(Node):
@@ -39,12 +39,12 @@ class TaskPlannerNode(Node):
                 self.get_logger().info(f"새로운 주문 상품 수신: {len(msg.detections)}개 물품을 받아왔습니다.")
 
     async def run_sequence(self):
-        if self.is_running or not self.detection_arr:
+        if self.is_running or not self.detections_arr:
             return
         self.is_running = True
 
-        items = self.detection_arr
-        self.detection_arr = []
+        items = self.detections_arr
+        self.detections_arr = []
 
         for item in items:
             
@@ -82,7 +82,7 @@ class TaskPlannerNode(Node):
                     break
 
                 self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
-                goal_msg_scan = ScanBarcode.Goal(product_id=str(item.product_id))
+                goal_msg_scan = ScanBarcode.Goal(product_id=barcode)
 
                 res2 = await self.call_action(self.scan_client, goal_msg_scan)
 
@@ -118,6 +118,8 @@ class TaskPlannerNode(Node):
                 break
 
         self.get_logger().info("==== 모든 테스트 종료 ====")
+
+        self.is_running = False
 
     async def call_action(self, client, goal):
         handle = await client.send_goal_async(goal, feedback_callback=self.fb_cb)
