@@ -35,16 +35,16 @@ class TaskPlannerNode(Node):
     def detection_callback(self, msg):
         if not self.is_running and not self.detections_arr:
             if len(msg.detections) > 0:
-                self.detection_arr = msg.detections
+                self.detections_arr = msg.detections
                 self.get_logger().info(f"새로운 주문 상품 수신: {len(msg.detections)}개 물품을 받아왔습니다.")
 
     async def run_sequence(self):
-        if self.is_running or not self.detection_arr:
+        if self.is_running or not self.detections_arr:
             return
         self.is_running = True
 
-        items = self.detection_arr
-        self.detection_arr = []
+        items = self.detections_arr
+        self.detections_arr = []
 
         for item in items:
             
@@ -82,7 +82,7 @@ class TaskPlannerNode(Node):
                     break
 
                 self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
-                goal_msg_scan = ScanBarcode.Goal(product_id=str(item.product_id))
+                goal_msg_scan = ScanBarcode.Goal(product_id=barcode)
 
                 res2 = await self.call_action(self.scan_client, goal_msg_scan)
 

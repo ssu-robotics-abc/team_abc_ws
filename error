@@ -1,0 +1,25 @@
+ssu@ssu-22663-26:~/doosan_project/team_abc_ws$ ros2 run abc_manipulation scan_barcode 
+_robot_id =dsr01
+_robot_model =m0609
+_srv_name_prefix =
+_topic_name_prefix =
+[INFO] [1779434749.857959452] [scan_barcode_server]: [Scan_Barcode] 그리퍼 연결 성공
+[INFO] [1779434749.860573685] [scan_barcode_server]: 🚀 [Scan_Barcode] Scan Barcode 서버가 시작되었습니다.
+[INFO] [1779434848.494066167] [scan_barcode_server]: 
+[Scan_Barcode 시작] 요청 상품 바코드:(8801097150010) 스캔 작업을 시작합니다.
+[INFO] [1779434848.494532393] [scan_barcode_server]: 🔄 [캔 제품 감지] 바코드(8801097150010) 수평 홈 이동 및 수직 재그립 시퀀스를 구동합니다.
+check_force_condition 5470
+[ERROR] <DSR_ROBOT.py> func_name = check_force_condition, line_no = 5470
+[ERROR] [1779434849.312990858] [scan_barcode_server]: Error raised in execute callback: (1001, 'Invalid value : axis(3)')
+Traceback (most recent call last):
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/action/server.py", line 337, in _execute_goal
+    execute_result = await await_or_execute(execute_callback, goal_handle)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 110, in await_or_execute
+    return callback(*args)
+  File "/home/ssu/doosan_project/team_abc_ws/install/abc_manipulation/lib/python3.10/site-packages/abc_manipulation/scan_barcode.py", line 135, in execute_callback
+    if check_force_condition(3, 15.0, ref=DR_BASE) == 1:
+  File "/home/ssu/ros2_ws/install/dsr_common2/lib/python3.10/site-packages/DSR_ROBOT2.py", line 5470, in check_force_condition
+    raise DR_Error(DR_ERROR_VALUE, "Invalid value : axis({0})".format(axis))
+DR_error2.DR_Error: (1001, 'Invalid value : axis(3)')
+[WARN] [1779434849.313568532] [scan_barcode_server]: Goal state not set, assuming aborted. Goal ID: [138 174  30 137 140 126  78  33 137  70 135 230 135  45  82 236]
+The following exception was never retrieved: Failed get goal status array: feedback publisher is invalid, at ./src/rcl_action/action_server.c:919
