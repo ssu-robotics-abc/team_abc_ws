@@ -1,3 +1,4 @@
 string raw_text
 ---
 bool success
+string message
