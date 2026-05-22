@@ -31,6 +31,15 @@ class YoloNode(Node):
         package_share_dir = get_package_share_directory("abc_perception")
         model_path = os.path.join(package_share_dir, "models", "best.pt")
         self.model = YOLO(model_path)
+        self.class_name_map = {
+            0: "8801117536411", #chocopie
+            1: "8801062518210", #Kancho
+            2: "8801062012725", #pepero_almond
+            3: "unknown",       #pepero_original
+            4: "8801056248703", #pepsi
+            5: "8801097150010", #pocari_sweat
+            6: "8801121768440", #soy_milk
+        }
 
         self.srv = self.create_service(
             UserRequest,
@@ -53,8 +62,14 @@ class YoloNode(Node):
 
         self.get_logger().info("YOLO Node 구동 중")
 
+    def get_class_name(self, cls_id):
+        if cls_id in self.class_name_map:
+            return self.class_name_map[cls_id]
+
+        return self.model.names.get(cls_id, str(cls_id))
+
     def handle_vlm_request(self, request, response):
-        known_classes = list(self.model.names.values())
+        known_classes = list(self.class_name_map.values())
 
         if len(request.class_name) == 0:
             self.is_active = False
@@ -129,7 +144,7 @@ class YoloNode(Node):
         if result.boxes is not None:
             for box in result.boxes:
                 cls_id = int(box.cls[0])
-                class_name = str(self.model.names[cls_id])
+                class_name = str(self.get_class_name(cls_id))
 
                 if class_name not in target_limits:
                     continue
@@ -163,9 +178,55 @@ class YoloNode(Node):
                 self.get_logger().info("1회 탐지 완료. YOLO 탐지 비활성화.")
 
         if self.debug_view:
-            debug_frame = result.plot()
+            debug_frame = self.draw_debug_frame(frame, result)
             cv2.imshow("YOLO Real-time Debug", debug_frame)
             cv2.waitKey(1)
+
+    def draw_debug_frame(self, frame, result):
+        debug_frame = frame.copy()
+
+        if result.boxes is None:
+            return debug_frame
+
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            class_name = str(self.get_class_name(cls_id))
+            confidence = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+
+            label = f"{class_name} {confidence:.2f}"
+            color = (0, 255, 0)
+
+            cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
+
+            text_size, baseline = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                1
+            )
+            text_w, text_h = text_size
+            text_y = max(y1, text_h + baseline + 4)
+
+            cv2.rectangle(
+                debug_frame,
+                (x1, text_y - text_h - baseline - 4),
+                (x1 + text_w + 4, text_y),
+                color,
+                -1
+            )
+            cv2.putText(
+                debug_frame,
+                label,
+                (x1 + 2, text_y - baseline - 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                1,
+                cv2.LINE_AA
+            )
+
+        return debug_frame
 
 
 def main(args=None):
