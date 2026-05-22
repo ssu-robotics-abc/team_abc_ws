@@ -42,6 +42,7 @@ setup(
             'task_planner = abc_manipulation.task_planner:main',
             'place_item = abc_manipulation.place_item:main',
             'pick_item = abc_manipulation.pick_item:main',
+            'scan_barcode = abc_manipulation.scan_barcode:main',
         ],
     },
 )
