@@ -1,5 +1,8 @@
 # Goal
-int32 product_id
+float32 center_x
+float32 center_y
+float32 width
+float32 height
 ---
 # Result
 bool success
