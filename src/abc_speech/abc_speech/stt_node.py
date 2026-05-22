@@ -13,8 +13,10 @@ class SttNode(Node):
         self.declare_parameter("language", "ko-KR")
         self.declare_parameter("device_index", -1)
         self.declare_parameter("energy_threshold", 50.0)
-        self.declare_parameter("pause_threshold", 0.8)
-        self.declare_parameter("phrase_time_limit", 5.0)
+        # self.declare_parameter("pause_threshold", 0.8)
+        # self.declare_parameter("phrase_time_limit", 5.0)
+        self.declare_parameter("pause_threshold", 1.5)
+        self.declare_parameter("phrase_time_limit", 8.0)
         self.declare_parameter("dynamic_energy", True)
         self.declare_parameter("ambient_duration", 2.0)
 
