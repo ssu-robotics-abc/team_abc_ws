@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/PlaceItem.action"
   "srv/CheckInventory.srv"
   "srv/Stt.srv"
+  "srv/SttStart.srv"
   "srv/UserRequest.srv"
   DEPENDENCIES 
     std_msgs 

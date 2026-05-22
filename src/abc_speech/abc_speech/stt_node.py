@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 
 import speech_recognition as sr
-from abc_interfaces.srv import Stt
+from abc_interfaces.srv import Stt, SttStart
 
 
 class SttNode(Node):
@@ -51,26 +51,69 @@ class SttNode(Node):
                 f"energy_threshold={self._recognizer.energy_threshold:.1f}"
             )
 
-        # service client
-        self._client = self.create_client(Stt, "/stt_result")
+        # 기존 STT 결과 전달 client
+        self._client = self.create_client(Stt, "/stt_results")
 
-        while not self._client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info("STT service waiting...")
+        # while not self._client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info("STT result service waiting...")
 
-        # background listening
-        self._stop_listen = self._recognizer.listen_in_background(
-            self._mic,
-            self._on_audio,
-            phrase_time_limit=self._phrase_lim,
+        # stt_start 서비스 서버
+        self._start_srv = self.create_service(
+            SttStart,
+            "/stt_start",
+            self._start_callback,
         )
 
-        self.get_logger().info("STT client 준비 완료")
+        # listening 상태 관리
+        self._stop_listen = None
+        self._is_listening = False
+
+        self.get_logger().info("STT node 준비 완료")
 
     def _log_devices(self):
         self.get_logger().info("=== 마이크 장치 목록 ===")
         for idx, name in enumerate(sr.Microphone.list_microphone_names()):
             mark = " ◀" if idx == self._device_idx else ""
             self.get_logger().info(f"[{idx}] {name}{mark}")
+
+    def _start_callback(self, request, response):
+        if not request.start:
+            response.success = False
+            return response
+
+        if self._is_listening:
+            self.get_logger().warning("이미 STT listening 중")
+            response.success = True
+            return response
+
+        try:
+            self._stop_listen = self._recognizer.listen_in_background(
+                self._mic,
+                self._on_audio,
+                phrase_time_limit=self._phrase_lim,
+            )
+
+            self._is_listening = True
+
+            self.get_logger().info("STT listening 시작")
+
+            response.success = True
+
+        except Exception as e:
+            self.get_logger().error(f"STT 시작 실패: {e}")
+            response.success = False
+
+        return response
+
+    def _stop_background_listening(self):
+        if self._stop_listen:
+            try:
+                self._stop_listen(wait_for_stop=False)
+            except Exception:
+                pass
+
+            self._stop_listen = None
+            self._is_listening = False
 
     def _on_audio(self, recognizer, audio):
         try:
@@ -83,6 +126,9 @@ class SttNode(Node):
                 return
 
             self.get_logger().info(f"[STT 결과] {text}")
+
+            # 한 번 인식했으면 listening 중지
+            self._stop_background_listening()
 
             req = Stt.Request()
             req.raw_text = text
@@ -112,12 +158,7 @@ class SttNode(Node):
             self.get_logger().error(f"service call 실패: {e}")
 
     def destroy_node(self):
-        if hasattr(self, "_stop_listen"):
-            try:
-                self._stop_listen(wait_for_stop=False)
-            except Exception:
-                pass
-
+        self._stop_background_listening()
         super().destroy_node()
 
 
