@@ -29,6 +29,7 @@ setup(
         'console_scripts': [
             'stt_node = abc_speech.stt_node:main',
             'tts_node = abc_speech.tts_node:main',
+            'stt_server = abc_speech.stt_server:main',
         ],
     },
 )

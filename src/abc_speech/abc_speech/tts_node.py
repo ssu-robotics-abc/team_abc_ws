@@ -6,7 +6,7 @@ import rclpy
 from rclpy.node import Node
 
 from gtts import gTTS
-from abc_interfaces.srv import UserRequest, SttStart
+from abc_interfaces.srv import UserRequest, SttStart, Tts
 
 
 class TtsNode(Node):
@@ -23,6 +23,12 @@ class TtsNode(Node):
         self.stt_client = self.create_client(
             SttStart,
             "/stt_start",
+        )
+
+        self._ambiguous_srv = self.create_service(
+            Tts,
+            "/ambiguous_order",
+            self.ambiguous_tts_callback,
         )
 
         while not self.stt_client.wait_for_service(timeout_sec=1.0):
@@ -135,6 +141,23 @@ class TtsNode(Node):
 
             response.success = False
             response.message = error_msg
+
+        return response
+    
+    #----------------------------------------------------
+    def ambiguous_tts_callback(self, request, response):
+        try:
+            self.get_logger().info(f"[Ambiguous TTS 요청] {request.text}")
+
+            self.play_tts(request.text)
+
+            response.success = True
+
+        except Exception as e:
+            error_msg = f"Ambiguous TTS 실패: {e}"
+            self.get_logger().error(error_msg)
+
+            response.success = False
 
         return response
 
