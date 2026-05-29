@@ -2,6 +2,7 @@ import os
 import rclpy
 import threading
 import numpy as np
+import time
 from scipy.spatial.transform import Rotation
 
 from abc_manipulation.realsense import ImgNode
@@ -31,7 +32,8 @@ DR_init.__dsr__model = ROBOT_MODEL
 DR_init.__dsr__node = node
 
 try:
-    from DSR_ROBOT2 import get_current_posx, movej, movel, wait
+    from DSR_ROBOT2 import (get_current_posx, movej, movel, wait, amovel, 
+                            get_tool_force, task_compliance_ctrl, release_compliance_ctrl)
     from DR_common2 import posx, posj
 except ImportError:
     print("두산 로봇 라이브러리 로드 실패")
@@ -44,6 +46,8 @@ X_OFFSET = 185.0            # 그리퍼 중심 보정 (mm)
 SIDE_APPROACH_DIST = 100.0  # 물체 정면 대기 거리 (mm)
 SAFE_Z = 400.0              # 이동 안전 높이
 SQUEEZE_RATIO = 0.95        # 파지 보정 (박스 재질 고려)
+
+REAL_TABLE_Z = 5.0    # 티칭 펜던트로 측정한 실제 진열대 바닥의 Z 좌표
 
 class PickItemServer(Node):
     def __init__(self):
@@ -70,6 +74,8 @@ class PickItemServer(Node):
         self.gripper = RG("rg2", "192.168.1.1", 502)
 
         self.JReady = posj([0, 0, 135, 0, -45, 90])
+        self.pos_home_horiz = posj([1, 38.89, 123.21, -0.08, -71.09, 89.94])  # 수평 시작 자세             
+        self.pos_home_vert  = posj([0, -20, 120, 0, 15, 90]) 
         self.home_pose = None
 
         # 액션 서버 생성 (태스크 플래너의 요청을 받을 창구)
@@ -102,6 +108,7 @@ class PickItemServer(Node):
         cx = int(goal_handle.request.center_x)
         cy = int(goal_handle.request.center_y)
         w = goal_handle.request.width
+        target_h = goal_handle.request.height # 빼빼로 상자나 음료수캔의 실제 총 높이 (세로 길이)
         
         self.get_logger().info(f"[액션 수신] 픽셀 좌표 기반 피킹 개시 -> 중심:({cx}, {cy}), 너비:{w}")
 
@@ -140,7 +147,7 @@ class PickItemServer(Node):
 
         # 4) 로봇 실제 구동 (블로킹 방식으로 순차 실행)
         try:
-            self.execute_pick_motion(*base_xyz, target_w, goal_handle)
+            self.execute_pick_motion(*base_xyz, target_w, target_h, goal_handle)
             
             # 모든 동작 성공적 종료 시
             goal_handle.succeed()
@@ -152,7 +159,7 @@ class PickItemServer(Node):
             goal_handle.abort()
             return PickItem.Result(success=False)
 
-    def execute_pick_motion(self, x, y, z, target_width, goal_handle):
+    def execute_pick_motion(self, x, y, z, target_width, target_height, goal_handle):
         """ 실제 로봇과 그리퍼를 움직이는 시퀀스 """
         cur = get_current_posx()[0]
         fixed_rx, fixed_ry, fixed_rz = cur[3:]
@@ -197,6 +204,61 @@ class PickItemServer(Node):
         # Step 6. 최종 초기화 및 대기 자세
         wait(1.0)
         movej(self.JReady, VELOCITY, ACC)
+
+
+        # 바닥에 제품 내려 놓기
+        # ---------------------------------------------------------------------
+        # 로직 1) 수평으로 잡은 물품을 바닥에 사뿐히 내려놓는다
+        # ---------------------------------------------------------------------
+        feedback_msg.state = "수평 홈 위치 이동 및 정렬..."
+        goal_handle.publish_feedback(feedback_msg)
+        movej(self.pos_home_horiz, VELOCITY, ACC)
+        wait(0.5)
+
+        # 유연 제어 활성화 (Z축 강성 600으로 진동 억제)
+        task_compliance_ctrl([3000, 3000, 600, 200, 200, 200])
+        
+        # 💡 측정한 바닥 좌표(8.0)와 물품 높이 기준, 정확한 안착 TCP Z 높이 계산
+        exact_place_z = REAL_TABLE_Z + (target_height / 2.0)
+        
+        cur_p = get_current_posx()[0] 
+        # 마지노선 타겟은 계산값보다 5mm 더 아래로 지정 (강제 정지 방지)
+        overdrive_pose = posx([cur_p[0], cur_p[1], exact_place_z - 5.0, cur_p[3], cur_p[4], cur_p[5]])
+        
+        amovel(overdrive_pose, vel=4, acc=10)
+        wait(0.5) 
+
+        start_time = time.time()
+        while rclpy.ok():
+            current_pos = get_current_posx()[0]
+            current_z = current_pos[2]       # 💡 실시간 Z 좌표
+
+            if current_z <= exact_place_z:
+                movel(current_pos, vel=1, acc=300) # vel=0 에러 없는 정석 급브레이크
+                self.get_logger().info(f"✅ [바닥 안착 성공] Z: {current_z:.2f}mm")
+                break
+                
+            if (time.time() - start_time) > 3.0:
+                movel(current_pos, vel=1, acc=300)
+                self.get_logger().info("시간 아웃으로 그리퍼 오픈")
+                break
+            wait(0.01)
+            
+        wait(0.3) # 안정화 대기 (스프링 백 방지를 위해 유연 제어는 끄지 않음)
+
+        # ---------------------------------------------------------------------
+        # 로직 2) 그리퍼를 연다
+        # ---------------------------------------------------------------------
+        feedback_msg.state = "그리퍼 개방 중..."
+        goal_handle.publish_feedback(feedback_msg)
+        self.gripper.open_gripper()
+        wait(0.8) # 로봇이 유연한 상태이므로 그리퍼가 열릴 때 물건을 쳐서 넘어뜨리지 않습니다.
+
+        # 3) 그리퍼를 연 채로 안전 높이로 상승
+        post_drop_p = get_current_posx()[0]
+        up_pose = posx([post_drop_p[0], post_drop_p[1], SAFE_Z, post_drop_p[3], post_drop_p[4], post_drop_p[5]])
+        movel(up_pose, VELOCITY, ACC)
+        wait(0.5)
 
     def run(self):
         """ 로봇 초기 자세 세팅 및 ROS2 멀티스레드 스핀 가동 """

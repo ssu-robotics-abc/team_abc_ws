@@ -84,7 +84,6 @@ class TaskPlannerNode(Node):
                 self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
                 goal_msg_scan = ScanBarcode.Goal(
                     product_id=barcode,
-                    height=h
                     )
 
                 res2 = await self.call_action(self.scan_client, goal_msg_scan)
