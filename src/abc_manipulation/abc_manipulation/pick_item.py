@@ -238,7 +238,7 @@ class PickItemServer(Node):
                 self.get_logger().info(f"✅ [바닥 안착 성공] Z: {current_z:.2f}mm")
                 break
                 
-            if (time.time() - start_time) > 3.0:
+            if (time.time() - start_time) > 1.0:
                 movel(current_pos, vel=1, acc=300)
                 self.get_logger().info("시간 아웃으로 그리퍼 오픈")
                 break

@@ -1,4 +1,6 @@
 import time
+import math
+import sys
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer
@@ -6,71 +8,63 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
 
-# 두산 로봇 및 그리퍼 관련 라이브러리
-import DR_init
+print("[디버그] 1. 라이브러리 임포트 중...")
+from moveit.planning import MoveItPy, PlanRequestParameters
+from moveit.core.robot_state import RobotState
 from abc_manipulation.onrobot import RG
 from abc_interfaces.action import ScanBarcode
 
-# ========================================================================
-# [사람이 개입해야 하는 부분 1] 물리적 환경 및 물품 치수 정의 (단위: mm)
-# ========================================================================
-# 💡 실제 환경에 맞게 이 두 값을 자로 재서 정확히 입력하셔야 공정이 성공합니다.
-REAL_TABLE_Z = 5.0    # 티칭 펜던트로 측정한 실제 진열대 바닥의 Z 좌표
-REAL_ITEM_HEIGHT = 133.0 # 빼빼로 상자나 음료수캔의 실제 총 높이 (세로 길이)
-
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
-Z_SAFE = 400.0          # 장애물을 치지 않는 안전 상공 높이
-VELOCITY, ACC = 60, 60  # 일반 이동 속도/가속도
+VELOCITY_SCALE = 0.6    
+ACCELERATION_SCALE = 0.6 
 
 GRIPPER_NAME = "rg2"
 TOOLCHARGER_IP = "192.168.1.1"
 TOOLCHARGER_PORT = 502
 
-# ========================================================================
-# 두산 라이브러리 초기화 및 임포트
-# ========================================================================
-if not rclpy.ok():
-    rclpy.init()
-
-dsr_node = rclpy.create_node("scan_barcode_server_node", namespace=ROBOT_ID)
-DR_init.__dsr__id = "dsr01"
-DR_init.__dsr__model = "m0609"
-DR_init.__dsr__node = dsr_node
-
-try:
-    # 💡 하이브리드 전략을 위해 task_compliance_ctrl(유연제어) 함수를 가져옵니다.
-    from DSR_ROBOT2 import (get_current_posx, movej, movel, wait, amovel, 
-                            get_tool_force, task_compliance_ctrl, release_compliance_ctrl)
-    from DR_common2 import posx, posj
-    
-    try:
-        from DR_common2 import DR_TOOL, DR_BASE
-    except ImportError:
-        DR_BASE = 0
-        DR_TOOL = 1
-except ImportError as e:
-    print(f"❌ 두산 로봇 라이브러리 로드 실패: {e}")
-    exit()
-
-
 class ScanBarcodeServer(Node):
     def __init__(self):
-        super().__init__('scan_barcode_server')
+        # 💡 충돌 방지를 위해 파이썬 서브 노드 이름을 다르게 임시 지정
+        super().__init__('scan_barcode_action_helper')
+        print("[디버그] 3. ScanBarcodeServer 클래스 내부 진입 완료.")
         cb_group = ReentrantCallbackGroup()
 
-        # 그리퍼 초기화
+        # ---------------------------------------------------------------------
+        # 함정 ① 해결: 그리퍼 하드웨어 연결 체크 (테스트 시 블로킹 방지)
+        # ---------------------------------------------------------------------
+        print("[디버그] 4. OnRobot 그리퍼 연결 시도 중... (여기서 멈추면 네트워크/하드웨어 문제입니다)")
         try:
+            # 💡 하드웨어 미연결 상태에서 테스트하려면 아래 한 줄을 주석 처리하세요.
             self.gripper = RG(GRIPPER_NAME, TOOLCHARGER_IP, TOOLCHARGER_PORT)
-            self.get_logger().info("[Scan_Barcode] 그리퍼 연결 성공")
+            print("[디버그] => 그리퍼 연결 성공!")
         except Exception as e:
-            self.get_logger().error(f"[Scan_Barcode] 그리퍼 연결 실패: {e}")
+            print(f"[디버그] => 그리퍼 연결 예외 발생 (무시하고 진행): {e}")
 
-        # [사람이 개입해야 하는 부분 2] 관절 공간 티칭 데이터
-        self.pos_home_horiz = posj([1, 38.89, 123.21, -0.08, -71.09, 89.94])  # 수평 시작 자세             
-        self.pos_home_vert  = posj([0, -20, 120, 0, 15, 90])                  # 수직 전환 자세             
-        self.pos_scanner    = posj([-27.84, 29.23, 51.69, -2.09, 99.83, 54.72]) # 스캐너 위치
+        # ---------------------------------------------------------------------
+        # 함정 ③ 해결: MoveItPy 엔진 초기화
+        # ---------------------------------------------------------------------
+        print("[디버그] 5. MoveItPy 엔진 초기화 시작... (여기서 멈추면 런치 파일 파라미터 문제입니다)")
+        try:
+            # 런치 파일의 파라미터를 정상 분할해 오기 위해 전용 이름 지정
+            self.robot = MoveItPy(node_name="scan_barcode_server")
+            self.arm = self.robot.get_planning_component("manipulator")
+            print("[디버그] => MoveItPy 엔진 로드 완료!")
+        except Exception as e:
+            print(f"❌ MoveItPy 치명적 초기화 에러: {e}")
+            sys.exit(1)
 
+        # 관절 공간 데이터 정의
+        self.joints_home_horiz = {
+            "joint_1": math.radians(1.0), "joint_2": math.radians(38.89), "joint_3": math.radians(123.21),
+            "joint_4": math.radians(-0.08), "joint_5": math.radians(-71.09), "joint_6": math.radians(89.94)
+        }
+        self.joints_scanner = {
+            "joint_1": math.radians(-27.84), "joint_2": math.radians(29.23), "joint_3": math.radians(51.69),
+            "joint_4": math.radians(-2.09), "joint_5": math.radians(99.83), "joint_6": math.radians(54.72)
+        }
+
+        print("[디버그] 6. ROS 2 통신인터페이스(Action/Topic) 생성 중...")
         self._action_server = ActionServer(
             self, ScanBarcode, 'scan_barcode', self.execute_callback, callback_group=cb_group
         )
@@ -79,37 +73,74 @@ class ScanBarcodeServer(Node):
         )
         self.is_scanned = False
         self.received_product_id = None
+        print("[디버그] 7. ScanBarcodeServer 모든 초기화 완료.")
 
     def scan_callback(self, msg):
         self.received_product_id = msg.data
         self.is_scanned = True
 
+    def plan_and_execute_joints(self, joint_goal, v_scale=None, a_scale=None):
+        """MoveIt 2를 이용해 목표 Joint 상태로 궤적을 계획하고 실행하는 공용 헬퍼 함수"""
+        self.arm.set_start_state_to_current_state()
+        
+        # ---------------------------------------------------------------------
+        # 🎯 [명세 교정] RobotState 객체 생성 및 순서 보장 리스트 주입
+        # ---------------------------------------------------------------------
+        # 1. 로봇 모델 정보를 기반으로 깨끗한 RobotState 객체를 새로 생성합니다.
+        goal_state = RobotState(self.robot.get_robot_model())
+        
+        # 2. 딕셔너리의 키 값을 URDF 관절 순서(1번~6번)에 맞게 정렬된 리스트로 펼쳐줍니다.
+        joint_names = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+        joint_values = [joint_goal[name] for name in joint_names]
+        
+        # 3. 플래닝 그룹("manipulator") 명의 근육 계층에 정렬된 각도 리스트를 주입합니다.
+        goal_state.set_joint_group_positions("manipulator", joint_values)
+        
+        # 4. 완벽하게 포장된 RobotState를 set_goal_state 인자에 대입합니다.
+        self.arm.set_goal_state(robot_state=goal_state)
+        # ---------------------------------------------------------------------
+
+        # 속도 및 가속도 파라미터 제어 프로필 적용 (기존 유지)
+        req_params = PlanRequestParameters(self.robot)
+        if v_scale is not None:
+            req_params.max_velocity_scaling_factor = v_scale
+        if a_scale is not None:
+            req_params.max_acceleration_scaling_factor = a_scale
+            
+        # 계획 및 실행
+        plan_result = self.arm.plan(parameters=req_params)
+        
+        if not plan_result:
+            log.error("Planning failed")
+            return False
+        log.info("Executing plan")
+        self.robot.execute(
+            group_name="manipulator",
+            robot_trajectory=plan_result.trajectory,
+            blocking=True,
+        )
+        
+        if plan_result:
+            return self.robot.execute(plan_result.trajectory)
+        return False
+
     def execute_callback(self, goal_handle):
+        # 기존 로직과 동일
         self.is_scanned = False
         self.received_product_id = None
         product_id_str = goal_handle.request.product_id
         feedback_msg = ScanBarcode.Feedback()
         
-        self.get_logger().info(f"▶️ [{product_id_str}] 하이브리드 제어 시퀀스 시작.")
-
-
-        
-        movej(self.pos_home_vert, VELOCITY, ACC)
-        wait(0.5)
-        
-    
-
-        # ---------------------------------------------------------------------
-        # 로직 5) 잡은상태로 스캐너위치로 이동한다
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "스캐너 앞으로 고속 이동 중..."
+        self.get_logger().info("제품 스캔 시퀀스 시작 (MoveIt 2).")
+        feedback_msg.state = "스캐너 앞으로 이동 중..."
         goal_handle.publish_feedback(feedback_msg)
-        movej(self.pos_scanner, VELOCITY, ACC) # 움찔거림 없는 관절 공간 고속 주행
-        wait(0.5)
+        
+        if not self.plan_and_execute_joints(self.joints_scanner):
+            self.get_logger().error("⚠️ 스캐너 위치 이동 계획 실패!")
+            goal_handle.abort()
+            return ScanBarcode.Result(success=False, is_corrected=False)
+        time.sleep(0.5)
 
-        # ---------------------------------------------------------------------
-        # 로직 6) 스캐너위치에 도달하면 회전하면서 바코드가 스캔될때까지 기다린다
-        # ---------------------------------------------------------------------
         feedback_msg.state = "바코드 스캔 대기 및 툴 회전..."
         goal_handle.publish_feedback(feedback_msg)
 
@@ -117,53 +148,48 @@ class ScanBarcodeServer(Node):
         timeout_duration = 30.0
         success_scan = False
 
-        self.get_logger().info("🔄 물품을 툴 좌표계 기준으로 한 바퀴 회전합니다.")
-        scanner_pose = get_current_posx()[0]
-        scan_target_pose = posx([scanner_pose[0], scanner_pose[1], scanner_pose[2], 
-                                 scanner_pose[3], scanner_pose[4], scanner_pose[5] + 360.0])
+        start_j6 = self.joints_scanner["joint_6"]
+        step_rotation = math.radians(20.0)   
+        steps = int(math.radians(360.0) / step_rotation)
+        scan_goal_joints = self.joints_scanner.copy()
         
-        amovel(scan_target_pose, vel=20, acc=20, ref=DR_TOOL) # 360도 부드러운 회전 시작
-        
-        while rclpy.ok():
+        for i in range(steps):
             if self.is_scanned:
                 success_scan = True
-                movel(get_current_posx()[0], vel=5, acc=150) # 인식 즉시 정지
                 break
             if (time.time() - start_wait_time) > timeout_duration:
-                self.get_logger().warn("⚠️ 스캔 타임아웃 발생.")
-                movel(get_current_posx()[0], vel=5, acc=150)
                 break
-            wait(0.05)
+            scan_goal_joints["joint_6"] = start_j6 + (i + 1) * step_rotation
+            self.plan_and_execute_joints(scan_goal_joints, v_scale=0.15, a_scale=0.2)
+            time.sleep(0.02)
 
-        # 결과 반환 및 수평 복귀 마무리
         result = ScanBarcode.Result()
         if success_scan and (self.received_product_id == product_id_str):
-            self.get_logger().info(f"✅ 바코드 일치 확인 완료 ({product_id_str})")
             result.is_corrected = True
             result.success = True
         else:
             result.is_corrected = False
             result.success = False
 
-        movej(self.pos_home_horiz, VELOCITY, ACC)
+        self.plan_and_execute_joints(self.joints_home_horiz)
         goal_handle.succeed()
         return result
 
 def main(args=None):
-    scan_server = ScanBarcodeServer()
+    print("[디버그] 2. main 함수 진입 및 rclpy.init 호출 중...")
+    rclpy.init(args=args)
     
-    # 멀티스레드 실행기 (액션 서버와 두산 로봇 제어가 동시에 돌아가기 위함)
+    scan_server = ScanBarcodeServer()
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(scan_server)
-    executor.add_node(dsr_node)
 
+    print("[디버gu] 8. MultiThreadedExecutor spin 시작!")
     try:
         executor.spin()
     except KeyboardInterrupt:
         print("\n[Scan_Barcode] 사용자에 의해 종료되었습니다.")
     finally:
         scan_server.destroy_node()
-        dsr_node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
