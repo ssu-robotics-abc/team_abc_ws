@@ -14,7 +14,7 @@ class SttNode(Node):
         self.declare_parameter("device_index", -1)
         self.declare_parameter("energy_threshold", 50.0)
         self.declare_parameter("pause_threshold", 1.5)
-        self.declare_parameter("phrase_time_limit", 8.0)
+        self.declare_parameter("phrase_time_limit", 10.0)
         self.declare_parameter("dynamic_energy", True)
         self.declare_parameter("ambient_duration", 2.0)
 
@@ -116,6 +116,7 @@ class SttNode(Node):
             self._is_listening = False
 
     def _on_audio(self, recognizer, audio):
+        self.get_logger().info("on_audio")
         try:
             text = recognizer.recognize_google(
                 audio,

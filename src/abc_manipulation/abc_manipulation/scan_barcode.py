@@ -39,7 +39,7 @@ class ScanBarcodeServer(Node):
 
         # 2. 주요 위치 정의 (전역 변수로 선언된 posj, posx 활용)
         self.pos_home = posj([0, 0, 135, 0, -45, 90])
-        self.pos_scanner = posx([408.0, -153.0, 342.0, 133.0, -172.0, -120.0])
+        self.pos_scanner    = posj([-27.84, 29.23, 51.69, -2.09, 99.83, 54.72]) # 스캐너 위치
         self.safe_z_offset = 100.0
 
         # 3. Scan_Barcode 액션 서버 생성
@@ -83,7 +83,7 @@ class ScanBarcodeServer(Node):
         feedback_msg.state = "스캐너 앞으로 이동 중..."
         goal_handle.publish_feedback(feedback_msg)
 
-        movel(self.pos_scanner, VELOCITY, ACC)
+        movej(self.pos_scanner, VELOCITY, ACC)
 
         # 3. 스캐너에 물건 바코드가 읽힐때까지 기다림.
         feedback_msg.state = "스캔 대기 중..."

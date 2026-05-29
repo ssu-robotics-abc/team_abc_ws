@@ -32,14 +32,15 @@ class YoloNode(Node):
         model_path = os.path.join(package_share_dir, "models", "best.pt")
         self.model = YOLO(model_path)
         self.class_name_map = {
-            0: "8801117536411", #chocopie
-            1: "8801062518210", #Kancho
+            0: "8801062518210", #Kancho
+            1: "8801117536411", #chocopie
             2: "8801062012725", #pepero_almond
             3: "unknown",       #pepero_original
             4: "8801056248703", #pepsi
             5: "8801097150010", #pocari_sweat
             6: "8801121768440", #soy_milk
         }
+        self.class_name_list = ["Kancho", "chocopie", "pepero_almond", "pepero_original", "pepsi", "pocari_sweat", "soy_milk"]
 
         self.srv = self.create_service(
             UserRequest,
@@ -132,7 +133,7 @@ class YoloNode(Node):
             self.get_logger().error(f"이미지 변환 실패: {e}")
             return
 
-        results = self.model(frame, conf=0.25, verbose=False)
+        results = self.model(frame, conf=0.5, verbose=False)
         result = results[0]
 
         det_array = DetectionArray()
@@ -194,7 +195,7 @@ class YoloNode(Node):
             confidence = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
-            label = f"{class_name} {confidence:.2f}"
+            label = f"{self.class_name_list[cls_id]} : {confidence:.2f}"
             color = (0, 255, 0)
 
             cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)

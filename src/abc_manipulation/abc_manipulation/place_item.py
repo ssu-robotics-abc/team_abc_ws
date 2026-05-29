@@ -37,7 +37,7 @@ class PlaceItemServer(Node):
             self.get_logger().error(f"[Place_Item] 그리퍼 연결 실패: {e}")
 
         # 2. 주요 위치 정의 (전역 변수로 선언된 posj, posx 활용)
-        self.pos_home = posj([0, -20, 120, 0, 15, 90])
+        self.pos_home = posj([0, 0, 135, 0, -45, 90])
         self.pos_checkout = posx([408.0, 153.0, 342.0, 33.0, 180.0, 100.0])  # 판매대
         self.pos_return = posx([408.0, -153.0, 342.0, 133.0, -172.0, -120.0])  # 반품대
         self.safe_z_offset = 100.0

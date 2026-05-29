@@ -21,6 +21,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/ScanBarcode.action"
   "action/PlaceItem.action"
   "srv/CheckInventory.srv"
+  "srv/Tts.srv"
   "srv/Stt.srv"
   "srv/SttStart.srv"
   "srv/UserRequest.srv"
