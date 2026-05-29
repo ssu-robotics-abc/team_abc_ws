@@ -9,7 +9,6 @@ find_program(XACRO_EXECUTABLE xacro REQUIRED)
 install(DIRECTORY
   urdf
   meshes
-  config
   DESTINATION share/${PROJECT_NAME}
 )
 
