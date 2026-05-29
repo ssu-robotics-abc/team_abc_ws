@@ -58,7 +58,7 @@ class SttNode(Node):
 
         #-----------------------------------------------------------
         # 기존 STT 결과 전달 client
-        self._client = self.create_client(Stt, "/stt_results")
+        self._vlm_client = self.create_client(Stt, "/stt_results")
 
         # stt_start 서비스 서버
         self._start_srv = self.create_service(
@@ -67,7 +67,7 @@ class SttNode(Node):
             self._start_callback,
         )
 
-        self._tts_client = self.create_client(Tts, "/ambiguous_order")      
+        self._tts_client = self.create_client(Tts, "/stt_to_tts")      
         
         while not self._tts_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("TTS service waiting...")
@@ -80,7 +80,7 @@ class SttNode(Node):
             "칸쵸",
             "초코파이",
             "펩시",
-            "포카리스웨트",
+            "포카리",
             "두유",
             "빼빼로 아몬드",
             "빼빼로 오리지널",
@@ -89,13 +89,13 @@ class SttNode(Node):
         self._alias_map = {
             "do you":               "두유",
             "soy milk":             "두유",
-            # "우유":                  "두유",
+            "우유":                  "두유",
             "fc":                   "펩시",
             "pepsi":                "펩시",
-            "pocari":               "포카리스웨트",
-            "포카리":               "포카리스웨트",
-            "보카리":               "포카리스웨트",
-            "보카리스웨트":           "포카리스웨트",
+            "pocari":               "포카리",
+            "포카리스웨트":            "포카리",
+            "보카리":                 "포카리",
+            "보카리스웨트":            "포카리",
             "간초":                 "칸쵸",
             "관초":                 "칸쵸",
             "칸초":                 "칸쵸",
@@ -116,15 +116,18 @@ class SttNode(Node):
         # pending 주문 상태
         self._pending_orders = []
         self._pending_disambiguation = None
+        self._pending_confirmation = None
 
         self.get_logger().info("STT node 준비 완료")
 
+    
     def _log_devices(self):
         self.get_logger().info("=== 마이크 장치 목록 ===")
         for idx, name in enumerate(sr.Microphone.list_microphone_names()):
             mark = " ◀" if idx == self._device_idx else ""
             self.get_logger().info(f"[{idx}] {name}{mark}")
 
+    
     def _start_callback(self, request, response):
         if not request.start:
             response.success = False
@@ -154,6 +157,7 @@ class SttNode(Node):
 
         return response
 
+    
     def _stop_background_listening(self):
         if self._stop_listen:
             try:
@@ -177,8 +181,10 @@ class SttNode(Node):
         "랑",
         "이랑",
         "그리고",
-        # "주세요",
-        # "줘",
+        "주세요",
+        "줘",
+        "죠",
+        "조",
         "하고",
         ]
 
@@ -237,6 +243,8 @@ class SttNode(Node):
                                 quantity = num
                                 break
 
+                        
+                        self.get_logger().info(f"[STATUS] need_disambiguation")
                         return {
                             "status": "need_disambiguation",
                             "base_product": base,
@@ -266,12 +274,25 @@ class SttNode(Node):
                     candidate, score, _ = match
                     self.get_logger().info(f"[product, score] {candidate}, {score}")
 
-                    if score >= 70:
+                    if score >= 60:
                         product = candidate
                         remaining = remaining.replace(token, "", 1)
 
             if not product:
-                break
+                if orders:
+                    self.get_logger().info(f"[STATUS] parse_failed")
+                    return {
+                        "status": "parse_failed",
+                        "failed_text": remaining,
+                        "orders": orders,
+                    }
+
+                else:
+                    self.get_logger().info(f"[STATUS] need_confirmation")
+                    return {
+                        "status": "need_confirmation",
+                        "original_text": text,
+                    }
 
             self.get_logger().info(f"[product] {product}")
                 
@@ -292,6 +313,7 @@ class SttNode(Node):
 
             orders.append((product, quantity))
 
+        self.get_logger().info(f"[STATUS] success")
         return {
             "status": "success",
             "orders": orders,
@@ -299,34 +321,97 @@ class SttNode(Node):
 
 
     def _handle_pending_disambiguation(self, normalized: str) -> bool:
+        option_map = self._pending_disambiguation["option_map"]
         candidates = self._pending_disambiguation["candidates"]
         quantity = self._pending_disambiguation["quantity"]
 
-        match = process.extractOne(
-            normalized,
-            candidates,
-            scorer=fuzz.ratio
-        )
+        if normalized in option_map:
+            selected_product = option_map[normalized]
 
-        if match:
+        elif normalized in candidates:
+            selected_product = normalized
+
+        else:
+            match = process.extractOne(
+                normalized,
+                list(option_map.keys()) + candidates,
+                scorer=fuzz.partial_ratio
+            )
+
+            if not match:
+                return False
+
             candidate, score, _ = match
 
-            if score >= 70:
-                self._pending_orders.append((candidate, quantity))
+            if score < 70:
+                return False
 
-                final_text = " ".join(
-                    f"{product} {qty}개"
-                    for product, qty in self._pending_orders
-                )
+            selected_product = option_map.get(candidate, candidate)
 
-                self._send_order(final_text)
+        self._pending_orders.append((selected_product, quantity))
 
-                self._pending_orders = []
-                self._pending_disambiguation = None
+        final_text = " ".join(
+            f"{product} {qty}개"
+            for product, qty in self._pending_orders
+        )
 
-                return True
+        self._pending_orders = []
+        self._pending_disambiguation = None
 
-        return False
+        self._send_order(final_text)
+
+        return True
+    
+    
+    def _handle_confirmation_request(self, result):
+
+        self._pending_confirmation = result["original_text"]
+
+        tts_text = (
+            f"{result['original_text']}라고 말씀하신 게 맞나요?"
+        )
+
+        self.get_logger().info(
+            f"[CONFIRMATION] {tts_text}"
+        )
+
+        self._stop_background_listening()
+        self._send_tts(tts_text)
+
+
+    def _handle_disambiguation_request(self, result):
+        self._pending_orders = result["orders"]
+
+        base_product = result["base_product"]
+
+        option_map = {}
+
+        option_map = {
+            candidate.replace(base_product, "").strip(): candidate
+            for candidate in result["candidates"]
+        }
+
+        self._pending_disambiguation = {
+            "base_product": base_product,
+            "option_map": option_map,
+            "candidates": result["candidates"],
+            "quantity": result["quantity"],
+        }
+
+        candidate_names = [
+            item.replace(base_product, "").strip()
+            for item in result["candidates"]
+        ]
+
+        tts_text = (
+            f"{', '.join(candidate_names)} 중 "
+            f"어떤 {base_product}를 원하시나요?"
+        )
+
+        self.get_logger().info(f"[TTS 질문] {tts_text}")
+
+        self._stop_background_listening()
+        self._send_tts(tts_text)
 
 
     def _send_order(self, final_text: str):
@@ -337,7 +422,7 @@ class SttNode(Node):
         req = Stt.Request()
         req.raw_text = final_text
 
-        future = self._client.call_async(req)
+        future = self._vlm_client.call_async(req)
         future.add_done_callback(self._service_response_callback)
 
 
@@ -347,6 +432,7 @@ class SttNode(Node):
 
         future = self._tts_client.call_async(req)
         future.add_done_callback(self._tts_response_callback)
+    
     
     def _tts_response_callback(self, future):
         try:
@@ -368,32 +454,7 @@ class SttNode(Node):
                 self.get_logger().warning("TTS request 실패")
 
         except Exception as e:
-            self.get_logger().error(f"TTS service call 실패: {e}")
-            
-
-    def _handle_disambiguation_request(self, result):
-        self._pending_orders = result["orders"]
-
-        self._pending_disambiguation = {
-            "candidates": result["candidates"],
-            "quantity": result["quantity"],
-        }
-
-        candidate_names = [
-            item.replace(result["base_product"], "").strip()
-            for item in result["candidates"]
-        ]
-
-        tts_text = (
-            f"{', '.join(candidate_names)} 중 "
-            f"어떤 {result['base_product']}를 원하시나요?"
-        )
-        
-        self.get_logger().info(f"[TTS 질문] {tts_text}")
-
-        self._stop_background_listening()
-        self._send_tts(tts_text)
-    
+            self.get_logger().error(f"TTS service call 실패: {e}")  
 
 
     def _on_audio(self, recognizer, audio):
@@ -416,6 +477,66 @@ class SttNode(Node):
             self.get_logger().info(f"[STT 원본] {text}")
 
             normalized = self._normalize_stt(text)
+
+            if self._pending_confirmation:
+
+                normalized = normalized.strip()
+
+                yes_words = [
+                    "네",
+                    "예",
+                    "맞아",
+                    "맞습니다",
+                    "응",
+                    "어",
+                ]
+
+                no_words = [
+                    "아니",
+                    "아니요",
+                    "틀려",
+                ]
+
+                if any(word in normalized for word in no_words):
+
+                    self._pending_confirmation = None
+
+                    self._stop_background_listening()
+                    self._send_tts(
+                        "주문을 다시 말씀해주세요."
+                    )
+
+                    self._stop_background_listening()
+                    
+                    return
+            
+                elif any(word in normalized for word in yes_words):
+
+                    self.get_logger().info(
+                        f"[VLM 주문] {self._pending_confirmation}"
+                    )
+
+                    req = Stt.Request()
+                    req.raw_text = self._pending_confirmation
+
+                    future = self._vlm_client.call_async(req)
+                    future.add_done_callback(
+                        self._service_response_callback
+                    )
+
+                    self._pending_confirmation = None
+
+                    self._stop_background_listening()
+
+                    return
+
+                else:
+                    self.get_logger().warning(
+                        "confirmation 응답 대기 중"
+                    )
+                    # pending 상태 유지
+                    return
+            
             
             if self._pending_disambiguation:
                 handled = self._handle_pending_disambiguation(normalized)
@@ -445,18 +566,30 @@ class SttNode(Node):
                     self._stop_background_listening()
                     self._send_tts("상품을 다시 말씀해주세요.")
                     return
+            
+            elif result["status"] == "parse_failed":
                 
-                
-                # self.get_logger().info(f"[STT 보정 결과] {final_text}")
+                failed_product = result["failed_text"]
 
-                # self._stop_background_listening()
+                self.get_logger().warning(
+                    f"주문 파싱 실패: {result['failed_text']}"
+                )
 
-                # req = Stt.Request()
-                # req.raw_text = final_text
+                self._stop_background_listening()
 
-                # future = self._client.call_async(req)
-                # future.add_done_callback(self._service_response_callback)
+                self._send_tts(
+                    f"{failed_product}는 등록되지 않은 상품입니다. "
+                    "전체 주문을 다시 말씀해주세요."
+                )
 
+                return
+
+            elif result["status"] == "need_confirmation":
+
+                self._handle_confirmation_request(
+                    result
+                )
+                                        
             elif result["status"] == "need_disambiguation":
                 self._handle_disambiguation_request(result)
                 
@@ -470,6 +603,7 @@ class SttNode(Node):
         except Exception as e:
             self.get_logger().error(f"STT 실패: {e}")
 
+    
     def _service_response_callback(self, future):
         try:
             response = future.result()
@@ -482,6 +616,7 @@ class SttNode(Node):
         except Exception as e:
             self.get_logger().error(f"service call 실패: {e}")
 
+    
     def destroy_node(self):
         self._stop_background_listening()
         super().destroy_node()
