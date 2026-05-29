@@ -1,5 +1,6 @@
 # Goal
-int32 product_id
+string product_id
+float32 height
 ---
 # Result
 bool success
