@@ -384,8 +384,6 @@ class SttNode(Node):
 
         base_product = result["base_product"]
 
-        option_map = {}
-
         option_map = {
             candidate.replace(base_product, "").strip(): candidate
             for candidate in result["candidates"]
@@ -505,8 +503,6 @@ class SttNode(Node):
                     self._send_tts(
                         "주문을 다시 말씀해주세요."
                     )
-
-                    self._stop_background_listening()
                     
                     return
             
