@@ -10,7 +10,7 @@ from std_msgs.msg import String
 
 print("[디버그] 1. 라이브러리 임포트 중...")
 from moveit.planning import MoveItPy, PlanRequestParameters
-from moveit.core.robot_state import RobotState
+from moveit_msgs.msg import Constraints, JointConstraint
 from abc_manipulation.onrobot import RG
 from abc_interfaces.action import ScanBarcode
 
@@ -18,6 +18,10 @@ ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY_SCALE = 0.6    
 ACCELERATION_SCALE = 0.6 
+GROUP_NAME = "manipulator"
+JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+JOINT_6_MIN = -3.14
+JOINT_6_MAX = 3.14
 
 GRIPPER_NAME = "rg2"
 TOOLCHARGER_IP = "192.168.1.1"
@@ -48,7 +52,7 @@ class ScanBarcodeServer(Node):
         try:
             # 런치 파일의 파라미터를 정상 분할해 오기 위해 전용 이름 지정
             self.robot = MoveItPy(node_name="scan_barcode_server")
-            self.arm = self.robot.get_planning_component("manipulator")
+            self.arm = self.robot.get_planning_component(GROUP_NAME)
             print("[디버그] => MoveItPy 엔진 로드 완료!")
         except Exception as e:
             print(f"❌ MoveItPy 치명적 초기화 에러: {e}")
@@ -79,50 +83,100 @@ class ScanBarcodeServer(Node):
         self.received_product_id = msg.data
         self.is_scanned = True
 
+    def build_joint_constraints(self, joint_goal):
+        constraints = Constraints()
+        for joint_name in JOINT_NAMES:
+            joint_constraint = JointConstraint()
+            joint_constraint.joint_name = joint_name
+            joint_constraint.position = joint_goal[joint_name]
+            joint_constraint.tolerance_above = 0.001
+            joint_constraint.tolerance_below = 0.001
+            joint_constraint.weight = 1.0
+            constraints.joint_constraints.append(joint_constraint)
+        return [constraints]
+
     def plan_and_execute_joints(self, joint_goal, v_scale=None, a_scale=None):
         """MoveIt 2를 이용해 목표 Joint 상태로 궤적을 계획하고 실행하는 공용 헬퍼 함수"""
-        self.arm.set_start_state_to_current_state()
-        
-        # ---------------------------------------------------------------------
-        # 🎯 [명세 교정] RobotState 객체 생성 및 순서 보장 리스트 주입
-        # ---------------------------------------------------------------------
-        # 1. 로봇 모델 정보를 기반으로 깨끗한 RobotState 객체를 새로 생성합니다.
-        goal_state = RobotState(self.robot.get_robot_model())
-        
-        # 2. 딕셔너리의 키 값을 URDF 관절 순서(1번~6번)에 맞게 정렬된 리스트로 펼쳐줍니다.
-        joint_names = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
-        joint_values = [joint_goal[name] for name in joint_names]
-        
-        # 3. 플래닝 그룹("manipulator") 명의 근육 계층에 정렬된 각도 리스트를 주입합니다.
-        goal_state.set_joint_group_positions("manipulator", joint_values)
-        
-        # 4. 완벽하게 포장된 RobotState를 set_goal_state 인자에 대입합니다.
-        self.arm.set_goal_state(robot_state=goal_state)
-        # ---------------------------------------------------------------------
-
-        # 속도 및 가속도 파라미터 제어 프로필 적용 (기존 유지)
-        req_params = PlanRequestParameters(self.robot)
-        if v_scale is not None:
-            req_params.max_velocity_scaling_factor = v_scale
-        if a_scale is not None:
-            req_params.max_acceleration_scaling_factor = a_scale
-            
-        # 계획 및 실행
-        plan_result = self.arm.plan(parameters=req_params)
-        
-        if not plan_result:
-            log.error("Planning failed")
+        if not (JOINT_6_MIN <= joint_goal["joint_6"] <= JOINT_6_MAX):
+            self.get_logger().error(
+                f"joint_6 목표가 MoveIt 제한 범위를 벗어났습니다: {joint_goal['joint_6']:.3f} rad"
+            )
             return False
-        log.info("Executing plan")
-        self.robot.execute(
-            group_name="manipulator",
-            robot_trajectory=plan_result.trajectory,
-            blocking=True,
-        )
-        
-        if plan_result:
-            return self.robot.execute(plan_result.trajectory)
-        return False
+
+        try:
+            self.arm.set_start_state_to_current_state()
+            self.arm.set_goal_state(motion_plan_constraints=self.build_joint_constraints(joint_goal))
+
+            req_params = PlanRequestParameters(self.robot)
+            if v_scale is not None:
+                req_params.max_velocity_scaling_factor = v_scale
+            if a_scale is not None:
+                req_params.max_acceleration_scaling_factor = a_scale
+
+            plan_result = self.arm.plan(parameters=req_params)
+            if not plan_result:
+                self.get_logger().error("Planning failed")
+                return False
+
+            self.get_logger().info("Executing plan")
+            self.robot.execute(
+                group_name=GROUP_NAME,
+                robot_trajectory=plan_result.trajectory,
+                blocking=True,
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"MoveIt 계획/실행 중 예외 발생: {e}")
+            return False
+
+    def sweep_joint_6_for_scan(self, start_wait_time, timeout_duration):
+        start_j6 = self.joints_scanner["joint_6"]
+        step_rotation = math.radians(20.0)
+        scan_goal_joints = self.joints_scanner.copy()
+
+        target_positions = self._make_joint_6_scan_positions(start_j6, step_rotation)
+
+        last_target_j6 = None
+        for target_j6 in target_positions:
+            if self.is_scanned:
+                return True
+            if (time.time() - start_wait_time) > timeout_duration:
+                self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
+                return False
+
+            if last_target_j6 is not None and abs(target_j6 - last_target_j6) < 1e-6:
+                continue
+
+            scan_goal_joints["joint_6"] = target_j6
+
+            if not self.plan_and_execute_joints(scan_goal_joints, v_scale=0.15, a_scale=0.2):
+                self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
+                return False
+            last_target_j6 = target_j6
+            time.sleep(0.02)
+
+        return self.is_scanned
+
+    def _make_joint_6_scan_positions(self, start_j6, step):
+        positions = []
+
+        current = start_j6 + step
+        while current <= JOINT_6_MAX:
+            positions.append(current)
+            current += step
+        if not positions or abs(positions[-1] - JOINT_6_MAX) > 1e-6:
+            positions.append(JOINT_6_MAX)
+
+        positions.append(start_j6)
+
+        current = start_j6 - step
+        while current >= JOINT_6_MIN:
+            positions.append(current)
+            current -= step
+        if abs(positions[-1] - JOINT_6_MIN) > 1e-6:
+            positions.append(JOINT_6_MIN)
+
+        return positions
 
     def execute_callback(self, goal_handle):
         # 기존 로직과 동일
@@ -146,33 +200,30 @@ class ScanBarcodeServer(Node):
 
         start_wait_time = time.time()
         timeout_duration = 30.0
-        success_scan = False
-
-        start_j6 = self.joints_scanner["joint_6"]
-        step_rotation = math.radians(20.0)   
-        steps = int(math.radians(360.0) / step_rotation)
-        scan_goal_joints = self.joints_scanner.copy()
-        
-        for i in range(steps):
-            if self.is_scanned:
-                success_scan = True
-                break
-            if (time.time() - start_wait_time) > timeout_duration:
-                break
-            scan_goal_joints["joint_6"] = start_j6 + (i + 1) * step_rotation
-            self.plan_and_execute_joints(scan_goal_joints, v_scale=0.15, a_scale=0.2)
-            time.sleep(0.02)
+        success_scan = self.sweep_joint_6_for_scan(start_wait_time, timeout_duration)
 
         result = ScanBarcode.Result()
-        if success_scan and (self.received_product_id == product_id_str):
-            result.is_corrected = True
+        if success_scan:
             result.success = True
+            result.is_corrected = self.received_product_id == product_id_str
+            if result.is_corrected:
+                self.get_logger().info("바코드 검증 성공: 상품 ID가 일치합니다.")
+            else:
+                self.get_logger().warning(
+                    f"바코드 검증 불일치: 요청={product_id_str}, 수신={self.received_product_id}"
+                )
         else:
-            result.is_corrected = False
             result.success = False
+            result.is_corrected = False
+            self.get_logger().error("바코드 스캔 실패: 바코드를 읽지 못했거나 로봇 이동이 실패했습니다.")
 
-        self.plan_and_execute_joints(self.joints_home_horiz)
-        goal_handle.succeed()
+        if not self.plan_and_execute_joints(self.joints_home_horiz):
+            self.get_logger().error("홈 위치 복귀 실패")
+
+        if result.success:
+            goal_handle.succeed()
+        else:
+            goal_handle.abort()
         return result
 
 def main(args=None):
