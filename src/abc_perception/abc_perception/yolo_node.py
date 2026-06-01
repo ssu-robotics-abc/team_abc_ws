@@ -32,8 +32,8 @@ class YoloNode(Node):
         model_path = os.path.join(package_share_dir, "models", "best.pt")
         self.model = YOLO(model_path)
         self.class_name_map = {
-            0: "8801117536411", #chocopie
-            1: "8801062518210", #Kancho
+            0: "8801062518210", #Kancho
+            1: "8801117536411", #chocopie
             2: "8801062012725", #pepero_almond
             3: "unknown",       #pepero_original
             4: "8801056248703", #pepsi

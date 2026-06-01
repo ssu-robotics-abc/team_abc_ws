@@ -65,7 +65,7 @@ class ScanBarcodeServer(Node):
         }
         self.joints_scanner = {
             "joint_1": math.radians(-27.84), "joint_2": math.radians(29.23), "joint_3": math.radians(51.69),
-            "joint_4": math.radians(-2.09), "joint_5": math.radians(99.83), "joint_6": math.radians(54.72)
+            "joint_4": math.radians(0.0), "joint_5": math.radians(99.11), "joint_6": math.radians(54.72)
         }
 
         print("[디버그] 6. ROS 2 통신인터페이스(Action/Topic) 생성 중...")
