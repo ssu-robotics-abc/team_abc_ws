@@ -4,6 +4,10 @@ from rclpy.node import Node
 import re
 from rapidfuzz import process, fuzz
 from jamo import h2j, j2hcj
+import time
+import json
+from datetime import datetime
+from pathlib import Path
 
 import speech_recognition as sr
 from abc_interfaces.srv import Stt, SttStart, Tts
@@ -102,9 +106,9 @@ class SttNode(Node):
             "칸초":                 "칸쵸",
             "칸죠":                 "칸쵸",
             "한초":                  "칸쵸",
-            "pepero almond":        "빼빼로 아몬드",
-            "아몬드 빼빼로":           "빼빼로 아몬드",
-            "빼빼로":                 "빼빼로 아몬드",
+            # "함초":                  "칸쵸",
+            "pepero almond":        "빼빼로",
+            "아몬드 빼빼로":           "빼빼로",
             # "pepero original":      "빼빼로 오리지널",
             # "오리지널 빼빼로":          "빼빼로 오리지널"
         }
@@ -154,6 +158,9 @@ class SttNode(Node):
                 self._on_audio,
                 phrase_time_limit=self._phrase_lim,
             )
+            self.get_logger().info(
+                f"listening start {time.time()}"
+            )
 
             self._is_listening = True
 
@@ -178,7 +185,52 @@ class SttNode(Node):
             self._stop_listen = None
             self._is_listening = False
 
-    
+
+    def _save_parse_failed_log(
+        self,
+        raw_text,
+        best_candidate=None,
+        score=None,
+        method=None,
+    ):
+        
+        try:
+
+            log_data = {
+                "time": datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "raw": raw_text,
+                "best_candidate": best_candidate,
+                "score": score,
+                "method": method,
+            }
+
+            log_path = Path.home() / "team_abc_ws/src/abc_speech/abc_speech/parse_failed_log.jsonl"
+            self.get_logger().info(
+                f"log path = {log_path}"
+            )
+            
+            with open(
+                log_path,
+                "a",
+                encoding="utf-8",
+            ) as f:
+
+                f.write(
+                    json.dumps(
+                        log_data,
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+
+        except Exception as e:
+            self.get_logger().error(
+                f"로그 저장 실패: {e}"
+            )
+
+
     def _normalize_stt(self, text: str) -> str:
         text = text.strip().lower()
 
@@ -287,6 +339,10 @@ class SttNode(Node):
             #                 "quantity": quantity,
             #             }
 
+            best_candidate = None
+            best_score = 0
+            best_method = None
+
             # 3. fuzzy match
             self.get_logger().info(f"[===fuzzy match]")
             if not product:
@@ -308,6 +364,11 @@ class SttNode(Node):
                     candidate, score, _ = match
                     self.get_logger().info(f"[product, score] {candidate}, {score}")
 
+                    if score > best_score:
+                        best_candidate = candidate
+                        best_score = score
+                        best_method = "fuzzy"
+
                     if score >= 60:
                         product = candidate
                         remaining = remaining.replace(token, "", 1)
@@ -324,6 +385,11 @@ class SttNode(Node):
 
                 candidate, score = self._jamo_match(token)
 
+                if score > best_score:
+                    best_candidate = candidate
+                    best_score = score
+                    best_method = "jamo"
+
                 self.get_logger().info(
                     f"[JAMO] {token} -> {candidate}, {score}"
                 )
@@ -337,13 +403,17 @@ class SttNode(Node):
                         1
                     )
 
+
             if not product:
-                if orders:
+                if best_score >= 20:
                     self.get_logger().info(f"[STATUS] parse_failed")
                     return {
                         "status": "parse_failed",
                         "failed_text": remaining,
                         "orders": orders,
+                        "best_candidate": best_candidate,
+                        "best_score": best_score,
+                        "method": best_method,
                     }
 
                 else:
@@ -515,6 +585,10 @@ class SttNode(Node):
 
 
     def _on_audio(self, recognizer, audio):
+        self.get_logger().info(
+            f"audio callback {time.time()}"
+        )
+        
         try:
             text = recognizer.recognize_google(
                 audio,
@@ -626,6 +700,13 @@ class SttNode(Node):
                     return
             
             elif result["status"] == "parse_failed":
+
+                self._save_parse_failed_log(
+                   raw_text=text,
+                   best_candidate=result.get("best_candidate"),
+                   score=result.get("best_score"),
+                   method=result.get("method"),
+                )           
                 
                 failed_product = result["failed_text"]
 
