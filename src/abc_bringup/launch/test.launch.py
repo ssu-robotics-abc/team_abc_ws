@@ -46,7 +46,7 @@ def generate_launch_description():
         ),
 
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(vlm_launch),
-        ),
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(vlm_launch),
+        # ),
     ])

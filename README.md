@@ -46,6 +46,7 @@ ros2 launch abc_bringup demo.launch.py
 - 마이크 입력 수집하고 STT를 수행하여
 - 음성 명령을 텍스트 주문으로 변환
 - 주문 결과를 특정 데이터 형태로 publish
+- 상품 재고 부족 시 재주문 요청
 
 
 ## 4. abc_perception
@@ -87,7 +88,7 @@ ros2 launch abc_bringup demo.launch.py
 > 실험 결과와 시스템 상태를 기록하는 패키지
 
 필요 역할:
-- STT 결과 기록
+- STT 결과 기록         (완료)
 - VLA 추론 시간 기록
 - 물체 탐지 결과 기록
 - 파지 성공 여부 기록

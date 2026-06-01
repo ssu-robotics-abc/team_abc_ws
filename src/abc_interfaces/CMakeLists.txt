@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/CheckInventory.srv"
   "srv/Stt.srv"
   "srv/SttStart.srv"
+  "srv/Tts.srv"
   "srv/UserRequest.srv"
   DEPENDENCIES 
     std_msgs 
