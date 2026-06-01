@@ -6,23 +6,29 @@ import rclpy
 from rclpy.node import Node
 
 from gtts import gTTS
-from abc_interfaces.srv import UserRequest, SttStart
+from abc_interfaces.srv import UserRequest, SttStart, Tts
 
 
 class TtsNode(Node):
     def __init__(self):
         super().__init__("tts_node")
 
-        self._srv = self.create_service(
+        self._vlm_srv = self.create_service(
             UserRequest,
             "/vlm_to_tts",
-            self.tts_callback,
+            self.vlm_callback,
         )
 
         # STT 서비스 클라이언트 추가
         self.stt_client = self.create_client(
             SttStart,
             "/stt_start",
+        )
+
+        self._stt_srv = self.create_service(
+            Tts,
+            "/stt_to_tts",
+            self.stt_callback,
         )
 
         while not self.stt_client.wait_for_service(timeout_sec=1.0):
@@ -86,7 +92,7 @@ class TtsNode(Node):
                 self.play_tts("주문을 시작해주세요")
                 self.trigger_stt()
 
-    def tts_callback(self, request, response):
+    def vlm_callback(self, request, response):
         class_names = request.class_name
         iterations = request.iteration
 
@@ -99,10 +105,14 @@ class TtsNode(Node):
             return response
 
         if not class_names:
-            msg = "요청된 상품이 없습니다."
+            msg = "[TTS 재생 완료] 요청된 상품이 없습니다."
             self.get_logger().warning(msg)
+            self.play_tts("요청된 상품이 없습니다")
 
-            response.success = False
+            # 재주문 위해 STT 다시 시작
+            self.trigger_stt()
+
+            response.success = True
             response.message = msg
             return response
 
@@ -110,7 +120,7 @@ class TtsNode(Node):
             items = []
 
             for name, count in zip(class_names, iterations):
-                items.append(f"{name} 상품이 {count}개만")
+                items.append(f"{name} 상품이 {count}개")
 
             items_text = ", ".join(items)
 
@@ -127,7 +137,7 @@ class TtsNode(Node):
             self.trigger_stt()
 
             response.success = True
-            response.message = "TTS 재생 완료"
+            response.message = "[TTS 재생 완료] 재고가 부족합니다."
 
         except Exception as e:
             error_msg = f"TTS 실패: {e}"
@@ -135,6 +145,23 @@ class TtsNode(Node):
 
             response.success = False
             response.message = error_msg
+
+        return response
+    
+    #----------------------------------------------------
+    def stt_callback(self, request, response):
+        try:
+            self.get_logger().info(f"[STT 요청] {request.text}")
+
+            self.play_tts(request.text)
+
+            response.success = True
+
+        except Exception as e:
+            error_msg = f"Ambiguous TTS 실패: {e}"
+            self.get_logger().error(error_msg)
+
+            response.success = False
 
         return response
 
