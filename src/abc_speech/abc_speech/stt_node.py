@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 import re
 from rapidfuzz import process, fuzz
+from jamo import h2j, j2hcj
 
 import speech_recognition as sr
 from abc_interfaces.srv import Stt, SttStart, Tts
@@ -19,7 +20,7 @@ class SttNode(Node):
         # self.declare_parameter("pause_threshold", 0.8)
         # self.declare_parameter("phrase_time_limit", 5.0)
         self.declare_parameter("pause_threshold", 1.5)
-        self.declare_parameter("phrase_time_limit", 8.0)
+        self.declare_parameter("phrase_time_limit", 10.0)
         self.declare_parameter("dynamic_energy", True)
         self.declare_parameter("ambient_duration", 2.0)
 
@@ -83,7 +84,7 @@ class SttNode(Node):
             "포카리",
             "두유",
             "빼빼로 아몬드",
-            "빼빼로 오리지널",
+            # "빼빼로 오리지널",
         ]
 
         self._alias_map = {
@@ -100,23 +101,32 @@ class SttNode(Node):
             "관초":                 "칸쵸",
             "칸초":                 "칸쵸",
             "칸죠":                 "칸쵸",
+            "한초":                  "칸쵸",
             "pepero almond":        "빼빼로 아몬드",
             "아몬드 빼빼로":           "빼빼로 아몬드",
-            "pepero original":      "빼빼로 오리지널",
-            "오리지널 빼빼로":          "빼빼로 오리지널"
+            "빼빼로":                 "빼빼로 아몬드",
+            # "pepero original":      "빼빼로 오리지널",
+            # "오리지널 빼빼로":          "빼빼로 오리지널"
         }
 
-        self._ambiguous_products = {
-            "빼빼로": [
-                "빼빼로 아몬드",
-                "빼빼로 오리지널",
-            ]
-        }
+        # self._ambiguous_products = {
+        #     "빼빼로": [
+        #         "빼빼로 아몬드",
+        #         "빼빼로 오리지널",
+        #     ]
+        # }
+        self._ambiguous_products = {}
 
         # pending 주문 상태
         self._pending_orders = []
         self._pending_disambiguation = None
         self._pending_confirmation = None
+
+        #상품명 jamo 저장
+        self._product_jamo = {}
+
+        for product in self._products:
+            self._product_jamo[product] = self._to_jamo(product)
 
         self.get_logger().info("STT node 준비 완료")
 
@@ -196,6 +206,30 @@ class SttNode(Node):
 
         return text
     
+    def _to_jamo(self, text: str):
+        return j2hcj(h2j(text))
+
+    
+    def _jamo_match(self, word: str):
+
+        input_jamo = self._to_jamo(word)
+
+        best_product = None
+        best_score = 0
+
+        for product in self._products:
+
+            score = fuzz.ratio(
+                input_jamo,
+                self._product_jamo[product]
+            )
+
+            if score > best_score:
+                best_score = score
+                best_product = product
+
+        return best_product, best_score
+
 
     def _extract_product_and_quantity(self, text: str):
         orders = []
@@ -231,27 +265,27 @@ class SttNode(Node):
                     remaining = remaining.replace(p, "", 1)
                     break
 
-            # 2. ambiguous base product
-            self.get_logger().info(f"[===ambiguous base product")
-            if not product:
-                for base in self._ambiguous_products.keys():
-                    if base in remaining:
-                        quantity = 1
+            # # 2. ambiguous base product
+            # self.get_logger().info(f"[===ambiguous base product")
+            # if not product:
+            #     for base in self._ambiguous_products.keys():
+            #         if base in remaining:
+            #             quantity = 1
 
-                        for word, num in number_map.items():
-                            if word in remaining:
-                                quantity = num
-                                break
+            #             for word, num in number_map.items():
+            #                 if word in remaining:
+            #                     quantity = num
+            #                     break
 
                         
-                        self.get_logger().info(f"[STATUS] need_disambiguation")
-                        return {
-                            "status": "need_disambiguation",
-                            "base_product": base,
-                            "candidates": self._ambiguous_products[base],
-                            "orders": orders,
-                            "quantity": quantity,
-                        }
+            #             self.get_logger().info(f"[STATUS] need_disambiguation")
+            #             return {
+            #                 "status": "need_disambiguation",
+            #                 "base_product": base,
+            #                 "candidates": self._ambiguous_products[base],
+            #                 "orders": orders,
+            #                 "quantity": quantity,
+            #             }
 
             # 3. fuzzy match
             self.get_logger().info(f"[===fuzzy match]")
@@ -277,6 +311,31 @@ class SttNode(Node):
                     if score >= 60:
                         product = candidate
                         remaining = remaining.replace(token, "", 1)
+
+            # 4. jamo match
+            if not product:
+                tokens = remaining.split()
+
+                if not tokens:
+                    break
+
+                token = tokens[0]
+                self.get_logger().info(f"[product] {token}")
+
+                candidate, score = self._jamo_match(token)
+
+                self.get_logger().info(
+                    f"[JAMO] {token} -> {candidate}, {score}"
+                )
+
+                if score >= 60:
+                    product = candidate
+
+                    remaining = remaining.replace(
+                        token,
+                        "",
+                        1
+                    )
 
             if not product:
                 if orders:
@@ -320,47 +379,47 @@ class SttNode(Node):
         }
 
 
-    def _handle_pending_disambiguation(self, normalized: str) -> bool:
-        option_map = self._pending_disambiguation["option_map"]
-        candidates = self._pending_disambiguation["candidates"]
-        quantity = self._pending_disambiguation["quantity"]
+    # def _handle_pending_disambiguation(self, normalized: str) -> bool:
+    #     option_map = self._pending_disambiguation["option_map"]
+    #     candidates = self._pending_disambiguation["candidates"]
+    #     quantity = self._pending_disambiguation["quantity"]
 
-        if normalized in option_map:
-            selected_product = option_map[normalized]
+    #     if normalized in option_map:
+    #         selected_product = option_map[normalized]
 
-        elif normalized in candidates:
-            selected_product = normalized
+    #     elif normalized in candidates:
+    #         selected_product = normalized
 
-        else:
-            match = process.extractOne(
-                normalized,
-                list(option_map.keys()) + candidates,
-                scorer=fuzz.partial_ratio
-            )
+    #     else:
+    #         match = process.extractOne(
+    #             normalized,
+    #             list(option_map.keys()) + candidates,
+    #             scorer=fuzz.partial_ratio
+    #         )
 
-            if not match:
-                return False
+    #         if not match:
+    #             return False
 
-            candidate, score, _ = match
+    #         candidate, score, _ = match
 
-            if score < 70:
-                return False
+    #         if score < 70:
+    #             return False
 
-            selected_product = option_map.get(candidate, candidate)
+    #         selected_product = option_map.get(candidate, candidate)
 
-        self._pending_orders.append((selected_product, quantity))
+    #     self._pending_orders.append((selected_product, quantity))
 
-        final_text = " ".join(
-            f"{product} {qty}개"
-            for product, qty in self._pending_orders
-        )
+    #     final_text = " ".join(
+    #         f"{product} {qty}개"
+    #         for product, qty in self._pending_orders
+    #     )
 
-        self._pending_orders = []
-        self._pending_disambiguation = None
+    #     self._pending_orders = []
+    #     self._pending_disambiguation = None
 
-        self._send_order(final_text)
+    #     self._send_order(final_text)
 
-        return True
+    #     return True
     
     
     def _handle_confirmation_request(self, result):
@@ -379,37 +438,37 @@ class SttNode(Node):
         self._send_tts(tts_text)
 
 
-    def _handle_disambiguation_request(self, result):
-        self._pending_orders = result["orders"]
+    # def _handle_disambiguation_request(self, result):
+    #     self._pending_orders = result["orders"]
 
-        base_product = result["base_product"]
+    #     base_product = result["base_product"]
 
-        option_map = {
-            candidate.replace(base_product, "").strip(): candidate
-            for candidate in result["candidates"]
-        }
+    #     option_map = {
+    #         candidate.replace(base_product, "").strip(): candidate
+    #         for candidate in result["candidates"]
+    #     }
 
-        self._pending_disambiguation = {
-            "base_product": base_product,
-            "option_map": option_map,
-            "candidates": result["candidates"],
-            "quantity": result["quantity"],
-        }
+    #     self._pending_disambiguation = {
+    #         "base_product": base_product,
+    #         "option_map": option_map,
+    #         "candidates": result["candidates"],
+    #         "quantity": result["quantity"],
+    #     }
 
-        candidate_names = [
-            item.replace(base_product, "").strip()
-            for item in result["candidates"]
-        ]
+    #     candidate_names = [
+    #         item.replace(base_product, "").strip()
+    #         for item in result["candidates"]
+    #     ]
 
-        tts_text = (
-            f"{', '.join(candidate_names)} 중 "
-            f"어떤 {base_product}를 원하시나요?"
-        )
+    #     tts_text = (
+    #         f"{', '.join(candidate_names)} 중 "
+    #         f"어떤 {base_product}를 원하시나요?"
+    #     )
 
-        self.get_logger().info(f"[TTS 질문] {tts_text}")
+    #     self.get_logger().info(f"[TTS 질문] {tts_text}")
 
-        self._stop_background_listening()
-        self._send_tts(tts_text)
+    #     self._stop_background_listening()
+    #     self._send_tts(tts_text)
 
 
     def _send_order(self, final_text: str):
@@ -479,6 +538,9 @@ class SttNode(Node):
             if self._pending_confirmation:
 
                 normalized = normalized.strip()
+                self.get_logger().info(
+                    f"[normalized] '{normalized}'"
+                )
 
                 yes_words = [
                     "네",
@@ -534,16 +596,16 @@ class SttNode(Node):
                     return
             
             
-            if self._pending_disambiguation:
-                handled = self._handle_pending_disambiguation(normalized)
-                if handled:
-                    return
+            # if self._pending_disambiguation:
+            #     handled = self._handle_pending_disambiguation(normalized)
+            #     if handled:
+            #         return
 
-                self.get_logger().warning("후보 선택 실패")
+            #     self.get_logger().warning("후보 선택 실패")
 
-                self._stop_background_listening()
-                self._send_tts("다시 말씀해주세요.")
-                return
+            #     self._stop_background_listening()
+            #     self._send_tts("다시 말씀해주세요.")
+            #     return
             
             result = self._extract_product_and_quantity(normalized)
             
@@ -586,8 +648,8 @@ class SttNode(Node):
                     result
                 )
                                         
-            elif result["status"] == "need_disambiguation":
-                self._handle_disambiguation_request(result)
+            # elif result["status"] == "need_disambiguation":
+            #     self._handle_disambiguation_request(result)
                 
 
         except sr.UnknownValueError:
