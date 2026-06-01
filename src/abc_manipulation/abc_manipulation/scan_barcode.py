@@ -60,8 +60,8 @@ class ScanBarcodeServer(Node):
 
         # 관절 공간 데이터 정의
         self.joints_home_horiz = {
-            "joint_1": math.radians(1.0), "joint_2": math.radians(38.89), "joint_3": math.radians(123.21),
-            "joint_4": math.radians(-0.08), "joint_5": math.radians(-71.09), "joint_6": math.radians(89.94)
+            "joint_1": math.radians(0.0), "joint_2": math.radians(0), "joint_3": math.radians(90),
+            "joint_4": math.radians(0), "joint_5": math.radians(90), "joint_6": math.radians(0)
         }
         self.joints_scanner = {
             "joint_1": math.radians(-27.84), "joint_2": math.radians(29.23), "joint_3": math.radians(51.69),

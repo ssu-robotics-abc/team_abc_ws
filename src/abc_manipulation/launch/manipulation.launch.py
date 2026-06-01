@@ -51,6 +51,10 @@ def generate_launch_description():
         executable='place_item',
         name='place_item_server',
         output='screen',
+        parameters=[
+            moveit_config.to_dict(),
+            moveit_py_params
+        ],
     )
         
     # 4. Task Planner 노드
