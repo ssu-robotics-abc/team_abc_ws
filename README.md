@@ -88,7 +88,7 @@ ros2 launch abc_bringup demo.launch.py
 > 실험 결과와 시스템 상태를 기록하는 패키지
 
 필요 역할:
-- STT 결과 기록
+- STT 결과 기록         (완료)
 - VLA 추론 시간 기록
 - 물체 탐지 결과 기록
 - 파지 성공 여부 기록
