@@ -126,7 +126,7 @@ class TtsNode(Node):
 
             full_text = (
                 f"{items_text} 있어 재고가 부족합니다. "
-                f"해당 상품만 재주문 해주세요."
+                f"전체 주문을 다시 해주세요."
             )
 
             self.get_logger().info(f"[TTS 요청] {full_text}")

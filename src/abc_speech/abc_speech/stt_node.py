@@ -4,6 +4,7 @@ from rclpy.node import Node
 import re
 from rapidfuzz import process, fuzz
 from jamo import h2j, j2hcj
+import subprocess
 import time
 import json
 from datetime import datetime
@@ -80,6 +81,8 @@ class SttNode(Node):
         # listening 상태 관리
         self._stop_listen = None
         self._is_listening = False
+        self._accepting_speech = False
+        self._processing_audio = False
 
         self._products = [
             "칸쵸",
@@ -94,13 +97,13 @@ class SttNode(Node):
         self._alias_map = {
             "do you":               "두유",
             "soy milk":             "두유",
-            "우유":                  "두유",
+            # "우유":                  "두유",
             "fc":                   "펩시",
             "pepsi":                "펩시",
             "pocari":               "포카리",
             "포카리스웨트":            "포카리",
-            "보카리":                 "포카리",
-            "보카리스웨트":            "포카리",
+            # "오카리":                 "포카리",
+            # "오카리스웨트":            "포카리",
             "간초":                 "칸쵸",
             "관초":                 "칸쵸",
             "칸초":                 "칸쵸",
@@ -132,6 +135,8 @@ class SttNode(Node):
         for product in self._products:
             self._product_jamo[product] = self._to_jamo(product)
 
+        self._start_background_listening()
+
         self.get_logger().info("STT node 준비 완료")
 
     
@@ -142,29 +147,53 @@ class SttNode(Node):
             self.get_logger().info(f"[{idx}] {name}{mark}")
 
     
+    def _play_ready_beep(self):
+        try:
+            subprocess.run(
+                ["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except Exception as e:
+            self.get_logger().warning(f"ready beep 실패: {e}")
+
+
+    def _start_background_listening(self):
+        if self._is_listening:
+            return
+
+        self._stop_listen = self._recognizer.listen_in_background(
+            self._mic,
+            self._on_audio,
+            phrase_time_limit=self._phrase_lim,
+        )
+        self._is_listening = True
+        self.get_logger().info("STT background listening 준비 완료")
+
+
+    def _pause_accepting_speech(self):
+        self._accepting_speech = False
+
+
     def _start_callback(self, request, response):
         if not request.start:
             response.success = False
             return response
 
-        if self._is_listening:
-            self.get_logger().warning("이미 STT listening 중")
+        if self._accepting_speech:
+            self.get_logger().warning("이미 STT 입력 대기 중")
             response.success = True
             return response
 
         try:
-            self._stop_listen = self._recognizer.listen_in_background(
-                self._mic,
-                self._on_audio,
-                phrase_time_limit=self._phrase_lim,
-            )
+            self._start_background_listening()
+            self._play_ready_beep()
+
+            self._accepting_speech = True
             self.get_logger().info(
-                f"listening start {time.time()}"
+                f"STT 입력 대기 시작 {time.time()}"
             )
-
-            self._is_listening = True
-
-            self.get_logger().info("STT listening 시작")
 
             response.success = True
 
@@ -176,6 +205,8 @@ class SttNode(Node):
 
     
     def _stop_background_listening(self):
+        self._pause_accepting_speech()
+
         if self._stop_listen:
             try:
                 self._stop_listen(wait_for_stop=False)
@@ -504,7 +535,6 @@ class SttNode(Node):
             f"[CONFIRMATION] {tts_text}"
         )
 
-        self._stop_background_listening()
         self._send_tts(tts_text)
 
 
@@ -544,7 +574,7 @@ class SttNode(Node):
     def _send_order(self, final_text: str):
         self.get_logger().info(f"[최종 주문] {final_text}")
 
-        self._stop_background_listening()
+        self._pause_accepting_speech()
 
         req = Stt.Request()
         req.raw_text = final_text
@@ -554,6 +584,8 @@ class SttNode(Node):
 
 
     def _send_tts(self, text: str):
+        self._pause_accepting_speech()
+
         req = Tts.Request()
         req.text = text
 
@@ -568,23 +600,28 @@ class SttNode(Node):
             if response.success:
                 self.get_logger().info("TTS request 성공")
 
-                if not self._is_listening:
-                    self._stop_listen = self._recognizer.listen_in_background(
-                        self._mic,
-                        self._on_audio,
-                        phrase_time_limit=self._phrase_lim,
-                    )
-                    self._is_listening = True
-                    self.get_logger().info("STT listening 시작")
+                self._start_background_listening()
+                self._accepting_speech = True
+                self.get_logger().info("STT 입력 대기 재개")
 
             else:
                 self.get_logger().warning("TTS request 실패")
+                self._accepting_speech = True
 
         except Exception as e:
             self.get_logger().error(f"TTS service call 실패: {e}")  
+            self._accepting_speech = True
 
 
     def _on_audio(self, recognizer, audio):
+        if not self._accepting_speech:
+            return
+
+        if self._processing_audio:
+            self.get_logger().warning("이전 음성 처리 중, 새 음성 무시")
+            return
+
+        self._processing_audio = True
         self.get_logger().info(
             f"audio callback {time.time()}"
         )
@@ -635,7 +672,6 @@ class SttNode(Node):
 
                     self._pending_confirmation = None
 
-                    self._stop_background_listening()
                     self._send_tts(
                         "주문을 다시 말씀해주세요."
                     )
@@ -658,7 +694,7 @@ class SttNode(Node):
 
                     self._pending_confirmation = None
 
-                    self._stop_background_listening()
+                    self._pause_accepting_speech()
 
                     return
 
@@ -695,7 +731,6 @@ class SttNode(Node):
 
                 #상품 추출 실패
                 else:
-                    self._stop_background_listening()
                     self._send_tts("상품을 다시 말씀해주세요.")
                     return
             
@@ -713,8 +748,6 @@ class SttNode(Node):
                 self.get_logger().warning(
                     f"주문 파싱 실패: {result['failed_text']}"
                 )
-
-                self._stop_background_listening()
 
                 self._send_tts(
                     f"{failed_product}는 등록되지 않은 상품입니다. "
@@ -741,6 +774,9 @@ class SttNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"STT 실패: {e}")
+
+        finally:
+            self._processing_audio = False
 
     
     def _service_response_callback(self, future):
