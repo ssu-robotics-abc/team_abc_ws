@@ -25,7 +25,7 @@ class SttNode(Node):
         # self.declare_parameter("pause_threshold", 0.8)
         # self.declare_parameter("phrase_time_limit", 5.0)
         self.declare_parameter("pause_threshold", 1.5)
-        self.declare_parameter("phrase_time_limit", 15.0)
+        self.declare_parameter("phrase_time_limit", 10.0)
         self.declare_parameter("dynamic_energy", True)
         self.declare_parameter("ambient_duration", 2.0)
 
@@ -270,31 +270,15 @@ class SttNode(Node):
             if alias in text:
                 text = text.replace(alias, canonical)
 
-        trailing_words = [
-            "주문해 주세요",
-            "시켜 주세요",
-            "주문해줘",
-            "시켜 줘",
-            "주문할게",
-            "부탁해요",
-            "부탁해",
-            "주세요",
-            "주라",
-            "줘",
-            "죠",
-            "조",
-        ]
-
-        pattern = r"(?:" + "|".join(map(re.escape, trailing_words)) + r")\s*$"
-        while re.search(pattern, text):
-            text = re.sub(pattern, "", text).strip()
-
-        text = re.sub(r"(^|\s)이랑(\s|$)", " ", text)
-
         filler_words = [
-            "랑",
-            "그리고",
-            "하고",
+        "랑",
+        "이랑",
+        "그리고",
+        "주세요",
+        "줘",
+        "죠",
+        "조",
+        "하고",
         ]
 
         for word in filler_words:
@@ -330,37 +314,20 @@ class SttNode(Node):
         return best_product, best_score
 
 
-    def _extract_leading_quantity(self, remaining: str):
-        quantity_words = [
-            ("하나", 1),
-            ("세계", 3),
-            ("한", 1),
-            ("1", 1),
-            ("두", 2),
-            ("둘", 2),
-            ("2", 2),
-            ("세", 3),
-            ("셋", 3),
-            ("3", 3),
-        ]
-
-        remaining = remaining.strip()
-
-        for word, quantity in quantity_words:
-            pattern = rf"^{re.escape(word)}\s*(?:개씩|개|씩)?"
-            match = re.match(pattern, remaining)
-
-            if not match:
-                continue
-
-            remaining = remaining[match.end():].strip()
-            return quantity, remaining
-
-        return 1, remaining
-
-
     def _extract_product_and_quantity(self, text: str):
         orders = []
+
+        number_map = {
+            "한": 1,
+            "하나": 1,
+            "1": 1,
+            "두": 2,
+            "둘": 2,
+            "2": 2,
+            "세": 3,
+            "셋": 3,
+            "3": 3,
+        }
 
         remaining = text.strip()
 
@@ -374,32 +341,12 @@ class SttNode(Node):
 
             # 1. exact product match
             self.get_logger().info(f"[===exact product match")
-            exact_match = None
-
             for p in products:
-                index = remaining.find(p)
-
-                if index < 0:
-                    continue
-
-                if (
-                    exact_match is None
-                    or index < exact_match[1]
-                    or (
-                        index == exact_match[1]
-                        and len(p) > len(exact_match[0])
-                    )
-                ):
-                    exact_match = (p, index)
-
-            if exact_match:
-                product, index = exact_match
-                self.get_logger().info(f"[product] {product}")
-                remaining = (
-                    remaining[:index]
-                    + " "
-                    + remaining[index + len(product):]
-                )
+                if p in remaining:
+                    product = p
+                    self.get_logger().info(f"[product] {product}")
+                    remaining = remaining.replace(p, "", 1)
+                    break
 
             # # 2. ambiguous base product
             # self.get_logger().info(f"[===ambiguous base product")
@@ -512,9 +459,17 @@ class SttNode(Node):
 
             # 4. quantity match
             self.get_logger().info(f"[===quantity match]")
-            quantity, remaining = self._extract_leading_quantity(
-                remaining
-            )
+            quantity = None
+
+            for word, num in number_map.items():
+                if word in remaining:
+                    quantity = num
+                    remaining = remaining.replace(word, "", 1)
+                    remaining = remaining.replace("개", "", 1)
+                    break
+
+            if quantity is None:
+                quantity = 1
 
             orders.append((product, quantity))
 
