@@ -25,6 +25,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SttStart.srv"
   "srv/Tts.srv"
   "srv/UserRequest.srv"
+  "srv/RequestItem.srv"
+  "srv/ResponseItem.srv"
   DEPENDENCIES 
     std_msgs 
     action_msgs
