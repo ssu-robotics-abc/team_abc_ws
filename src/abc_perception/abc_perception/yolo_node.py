@@ -34,6 +34,7 @@ class YoloNode(Node):
             5: "8801097150010", #pocari_sweat
             6: "8801121768440", #soy_milk
         }
+        self.class_name= {"Kancho", "chocopie", "pepero_almond", "pepero_original", "pepsi", "pocari_sweat", "soy_milk"}
 
         self.request_service_name = (
             self.declare_parameter("request_service_name", "/request_item")
@@ -135,14 +136,14 @@ class YoloNode(Node):
         self.latest_header = msg.header
 
         if self.debug_view:
-            results = self.model(frame, conf=0.25, verbose=False)
+            results = self.model(frame, conf=0.5, verbose=False)
             result = results[0]
             debug_frame = self.draw_debug_frame(frame, result)
             cv2.imshow("YOLO Real-time Debug", debug_frame)
             cv2.waitKey(1)
 
     def detect_requested_item(self, requested_class_name):
-        results = self.model(self.latest_frame, conf=0.25, verbose=False)
+        results = self.model(self.latest_frame, conf=0.5, verbose=False)
         result = results[0]
 
         best_detection = None
@@ -158,6 +159,8 @@ class YoloNode(Node):
             if class_name != requested_class_name:
                 continue
 
+            class_name = self.get_class_name(cls_id)
+            
             confidence = float(box.conf[0])
             if confidence <= best_confidence:
                 continue
