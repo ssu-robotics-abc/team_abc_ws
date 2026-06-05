@@ -1,457 +1,571 @@
 import os
-import rclpy
-import threading
-import numpy as np
+import sys
 import time
-from scipy.spatial.transform import Rotation
+import math
 
-from abc_manipulation.realsense import ImgNode
-from abc_manipulation.onrobot import RG
+import numpy as np
+import rclpy
 from ament_index_python.packages import get_package_share_directory
-import DR_init
-
-from abc_interfaces.msg import DetectionArray
-from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from moveit.planning import MoveItPy, PlanRequestParameters
+from moveit_msgs.msg import Constraints, JointConstraint
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from scipy.spatial.transform import Rotation
+
 from abc_interfaces.action import PickItem
+from abc_manipulation.onrobot import RG
+from abc_manipulation.realsense import ImgNode
 
-# ======================
-# 1. 로봇 및 ROS2 초기 설정
-# ======================
-ROBOT_ID = "dsr01"
-ROBOT_MODEL = "m0609"
-VELOCITY, ACC = 60, 60
 
-rclpy.init()
-node = rclpy.create_node("dsr_auto_pick", namespace=ROBOT_ID)
+GROUP_NAME = "manipulator"
+BASE_FRAME = "base_link"
+EE_LINK = "link_6"
+JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-DR_init.__dsr__id = ROBOT_ID
-DR_init.__dsr__model = ROBOT_MODEL
-DR_init.__dsr__node = node
+VELOCITY_SCALE = 0.15
+ACCELERATION_SCALE = 0.1
 
-try:
-    from DSR_ROBOT2 import (get_current_posx, get_current_posj, movej, movel, wait, amovel, 
-                            get_tool_force, task_compliance_ctrl, release_compliance_ctrl)
-    from DR_common2 import posx, posj
-except ImportError:
-    print("두산 로봇 라이브러리 로드 실패")
-    exit()
+GRIPPER_NAME = "rg2"
+TOOLCHARGER_IP = "192.168.1.1"
+TOOLCHARGER_PORT = 502
 
-# ======================
-# 2. 시스템 파라미터 설정
-# ======================
-X_OFFSET = 185.0            # 그리퍼 중심 보정 (mm)
-SIDE_APPROACH_DIST = 100.0  # 물체 정면 대기 거리 (mm)
-SAFE_Z = 400.0              # 이동 안전 높이
+X_OFFSET = 185.0
+SIDE_APPROACH_DIST = 150.0 #후퇴하는 거리
 SQUEEZE_RATIO = 0.95
-REAL_TABLE_Z = 5.0          # 티칭 펜던트로 측정한 실제 진열대 바닥의 Z 좌표
+
+REAL_TABLE_Z = 5.0
+PLACE_Z_BIAS_MM = 15.0 #수평 파지에서 제품 내려놓을때의 Z 보정값
+VERTICAL_RPY = [1.04, 178.40, 93.34]
+VERTICAL_X_OFFSET_MM = 0.0 #수직 자세에서 다시 잡을때 X 보정값
+VERTICAL_Y_OFFSET_MM = 0.0 #수직 자세에서 다시 잡을때 Y 보정값
+VERTICAL_LIFT_BEFORE_ROTATE_MM = 300.0 
+DEPTH_CENTER_ROI_PX = 90
+DEPTH_FLOOR_RING_PX = 150
+MIN_DEPTH_POINTS = 30
+OBJECT_MIN_HEIGHT_MM = 20.0
+OBJECT_MAX_HEIGHT_MM = 300.0
+OBJECT_TOP_PERCENTILE = 92.0
+OBJECT_WIDTH_PERCENTILE_LOW = 5.0
+OBJECT_WIDTH_PERCENTILE_HIGH = 95.0
+VERTICAL_APPROACH_CLEARANCE_MM = 120.0
+VERTICAL_TOP_GRASP_DEPTH_MM = 25.0
+VERTICAL_DEPTH_Z_BIAS_MM = 0.0
+MIN_PICK_ABOVE_FLOOR_MM = 30.0
+VERTICAL_GRIP_WIDTH_AXIS = "y"
+VERTICAL_GRIP_WIDTH_MARGIN_MM = 8.0
+VERTICAL_CENTER_CORRECTION_LIMIT_MM = 120.0
+FINAL_LIFT_MM = 100.0
+
 
 class PickItemServer(Node):
     def __init__(self):
-        super().__init__('pick_item_server')
+        super().__init__("pick_item_action_helper")
         cb_group = ReentrantCallbackGroup()
 
-        # 이미지 노드 초기화 및 인트린식(카메라 고유 파라미터) 대기
         self.img_node = ImgNode()
-        self.get_logger().info("카메라 및 비전 파라미터 대기 중")
+        self.get_logger().info("[Pick_Item] 카메라 및 비전 파라미터 대기 중")
         while rclpy.ok() and self.img_node.get_camera_intrinsic() is None:
             rclpy.spin_once(self.img_node, timeout_sec=0.1)
-
         self.intrinsics = self.img_node.get_camera_intrinsic()
-        
-        # 그리퍼-카메라 변환 행렬 로드
+
         package_path = get_package_share_directory("abc_manipulation")
-        gripper2cam_file_path = os.path.join(package_path, 'T_gripper2camera.npy')
-        
+        gripper2cam_file_path = os.path.join(package_path, "T_gripper2camera.npy")
         if not os.path.exists(gripper2cam_file_path):
             current_dir = os.path.dirname(os.path.abspath(__file__))
             gripper2cam_file_path = os.path.join(current_dir, "T_gripper2camera.npy")
-            
         self.gripper2cam = np.load(gripper2cam_file_path)
-        self.gripper = RG("rg2", "192.168.1.1", 502)
 
-        self.JReady = posj([0, 0, 135, 0, -45, 90])
-        '''
-        self.pos_home_horiz = posj([1, 38.89, 123.21, -0.08, -71.09, 89.94])  # 수평 시작 자세             
-        self.pos_home_vert  = posj([0, -20, 120, 0, 15, 90]) 
-        '''
-        self.pos_home_horiz = posx([431.39, 13.76, 112.90, 178.23, -90.00, -86.81])    
-        self.pos_home_vert = posj([
-            0.228,
-            40.153,
-            48.268,
-            0.155,
-            89.955,
-            92.466
-        ])          
-        #self.pos_home_vert  = posx([635.02, 8.2, 337.79, 1.04, 178.40, 93.34])
+        try:
+            self.gripper = RG(GRIPPER_NAME, TOOLCHARGER_IP, TOOLCHARGER_PORT)
+            self.get_logger().info("[Pick_Item] 그리퍼 연결 성공")
+        except Exception as e:
+            self.get_logger().error(f"[Pick_Item] 그리퍼 연결 실패: {e}")
+            self.gripper = None
 
-        self.home_pose = None
+        try:
+            self.robot = MoveItPy(node_name="pick_item_server")
+            self.arm = self.robot.get_planning_component(GROUP_NAME)
+            self.get_logger().info("[Pick_Item] MoveItPy 엔진 로드 완료")
+        except Exception as e:
+            self.get_logger().error(f"[Pick_Item] MoveItPy 초기화 실패: {e}")
+            sys.exit(1)
 
-        # 액션 서버 생성 (태스크 플래너의 요청을 받을 창구)
+        self.joints_ready = {
+            "joint_1": math.radians(0.0),
+            "joint_2": math.radians(0.0),
+            "joint_3": math.radians(135.0),
+            "joint_4": math.radians(0.0),
+            "joint_5": math.radians(-45.0),
+            "joint_6": math.radians(90.0),
+        }
+
+        if not self.move_to_ready_pose():
+            self.get_logger().error("[Pick_Item] JReady 이동 실패. 서버를 종료합니다.")
+            sys.exit(1)
+
         self._action_server = ActionServer(
             self,
             PickItem,
-            'pick_item',
+            "pick_item",
             self.execute_callback,
-            callback_group=cb_group
+            callback_group=cb_group,
         )
-        self.get_logger().info("🚀 pick_item 서버가 준비되었습니다. 플래너의 명령을 기다립니다.")
+        self.get_logger().info("[Pick_Item] pick_item 서버가 준비되었습니다.")
 
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
-        R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
-        T = np.eye(4)
-        T[:3, :3] = R
-        T[:3, 3] = [x, y, z]
-        return T
+        rotation = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
+        transform = np.eye(4)
+        transform[:3, :3] = rotation
+        transform[:3, 3] = [x, y, z]
+        return transform
 
     def transform_to_base(self, camera_coords, capture_pose):
         coord = np.append(np.array(camera_coords, dtype=float), 1.0)
         base2gripper = self.get_robot_pose_matrix(*capture_pose)
         base2cam = base2gripper @ self.gripper2cam
-        td_coord = base2cam @ coord
-        return td_coord[:3]
+        base_coord = base2cam @ coord
+        return base_coord[:3]
+
+    def transform_depth_roi_to_base_points(self, depth_frame, roi, capture_pose):
+        x1, y1, x2, y2 = roi
+        roi_depth = depth_frame[y1:y2, x1:x2].astype(float)
+        valid_mask = roi_depth > 0.0
+        if np.count_nonzero(valid_mask) == 0:
+            return np.empty((0, 3)), np.empty((0, 2), dtype=int)
+
+        ys, xs = np.indices(roi_depth.shape)
+        px = xs[valid_mask] + x1
+        py = ys[valid_mask] + y1
+        depth = roi_depth[valid_mask]
+
+        fx = self.intrinsics["fx"]
+        fy = self.intrinsics["fy"]
+        ppx = self.intrinsics["ppx"]
+        ppy = self.intrinsics["ppy"]
+
+        cam_x = (px - ppx) * depth / fx
+        cam_y = (py - ppy) * depth / fy
+        cam_points = np.column_stack((cam_x, cam_y, depth, np.ones_like(depth)))
+
+        base2gripper = self.get_robot_pose_matrix(*capture_pose)
+        base2cam = base2gripper @ self.gripper2cam
+        base_points = (base2cam @ cam_points.T).T[:, :3]
+        pixels = np.column_stack((px, py)).astype(int)
+        return base_points, pixels
+
+    def project_base_to_pixel(self, base_xyz, capture_pose):
+        base_point = np.array([base_xyz[0], base_xyz[1], base_xyz[2], 1.0], dtype=float)
+        base2gripper = self.get_robot_pose_matrix(*capture_pose)
+        base2cam = base2gripper @ self.gripper2cam
+        cam_point = np.linalg.inv(base2cam) @ base_point
+        if cam_point[2] <= 0.0:
+            raise RuntimeError(f"projection 실패: 카메라 앞쪽 점이 아닙니다. cam_z={cam_point[2]:.1f}")
+
+        u = (cam_point[0] * self.intrinsics["fx"] / cam_point[2]) + self.intrinsics["ppx"]
+        v = (cam_point[1] * self.intrinsics["fy"] / cam_point[2]) + self.intrinsics["ppy"]
+        return int(round(u)), int(round(v))
+
+    def make_square_roi(self, center_px, radius_px, image_shape):
+        cx, cy = center_px
+        height, width = image_shape[:2]
+        x1 = max(0, cx - radius_px)
+        y1 = max(0, cy - radius_px)
+        x2 = min(width, cx + radius_px + 1)
+        y2 = min(height, cy + radius_px + 1)
+        if x2 <= x1 or y2 <= y1:
+            raise RuntimeError(f"ROI 생성 실패: center=({cx}, {cy}), radius={radius_px}")
+        return x1, y1, x2, y2
+
+    def estimate_vertical_grasp_from_depth(self, place_x, place_y, place_z, vertical_pose):
+        depth_frame = self.img_node.get_depth_frame()
+        if depth_frame is None:
+            raise RuntimeError("수직 재측정용 depth frame 없음")
+
+        capture_pose = self.get_current_dsr_pose()
+        projected_px = self.project_base_to_pixel((place_x, place_y, place_z), capture_pose)
+        image_height, image_width = depth_frame.shape[:2]
+        if not (0 <= projected_px[0] < image_width and 0 <= projected_px[1] < image_height):
+            raise RuntimeError(f"projection pixel이 이미지 밖입니다: {projected_px}")
+
+        center_roi = self.make_square_roi(projected_px, DEPTH_CENTER_ROI_PX, depth_frame.shape)
+        outer_roi = self.make_square_roi(projected_px, DEPTH_FLOOR_RING_PX, depth_frame.shape)
+        center_points, _ = self.transform_depth_roi_to_base_points(depth_frame, center_roi, capture_pose)
+        outer_points, outer_pixels = self.transform_depth_roi_to_base_points(depth_frame, outer_roi, capture_pose)
+
+        if len(center_points) < MIN_DEPTH_POINTS:
+            raise RuntimeError(f"물체 후보 ROI depth point 부족: {len(center_points)}개")
+
+        cx1, cy1, cx2, cy2 = center_roi
+        ring_mask = (
+            (outer_pixels[:, 0] < cx1)
+            | (outer_pixels[:, 0] >= cx2)
+            | (outer_pixels[:, 1] < cy1)
+            | (outer_pixels[:, 1] >= cy2)
+        )
+        floor_candidates = outer_points[ring_mask]
+        if len(floor_candidates) >= MIN_DEPTH_POINTS:
+            floor_z = float(np.median(floor_candidates[:, 2]))
+            floor_source = "depth"
+        else:
+            floor_z = REAL_TABLE_Z
+            floor_source = "REAL_TABLE_Z fallback"
+
+        object_mask = center_points[:, 2] > (floor_z + OBJECT_MIN_HEIGHT_MM)
+        object_points = center_points[object_mask]
+        if len(object_points) < MIN_DEPTH_POINTS:
+            raise RuntimeError(
+                f"물체 후보 point 부족: {len(object_points)}개 "
+                f"(floor_z={floor_z:.1f}, source={floor_source})"
+            )
+
+        object_top_z = float(np.percentile(object_points[:, 2], OBJECT_TOP_PERCENTILE))
+        object_height_mm = object_top_z - floor_z
+        if object_height_mm < OBJECT_MIN_HEIGHT_MM or object_height_mm > OBJECT_MAX_HEIGHT_MM:
+            raise RuntimeError(
+                f"물체 높이 추정값 비정상: height={object_height_mm:.1f}mm, "
+                f"floor={floor_z:.1f}, top={object_top_z:.1f}"
+            )
+
+        measured_center_x = float(np.median(object_points[:, 0]))
+        measured_center_y = float(np.median(object_points[:, 1]))
+        center_error = math.hypot(measured_center_x - place_x, measured_center_y - place_y)
+        if center_error > VERTICAL_CENTER_CORRECTION_LIMIT_MM:
+            raise RuntimeError(
+                f"depth 중심 보정량이 너무 큽니다: {center_error:.1f}mm "
+                f"(limit={VERTICAL_CENTER_CORRECTION_LIMIT_MM:.1f}mm)"
+            )
+
+        base2vertical = self.get_robot_pose_matrix(*vertical_pose)
+        object_points_h = np.column_stack((object_points, np.ones(len(object_points))))
+        local_points = (np.linalg.inv(base2vertical) @ object_points_h.T).T[:, :3]
+        if VERTICAL_GRIP_WIDTH_AXIS == "x":
+            width_axis_values = local_points[:, 0]
+        elif VERTICAL_GRIP_WIDTH_AXIS == "y":
+            width_axis_values = local_points[:, 1]
+        else:
+            raise RuntimeError(f"지원하지 않는 VERTICAL_GRIP_WIDTH_AXIS: {VERTICAL_GRIP_WIDTH_AXIS}")
+
+        measured_width_mm = float(
+            np.percentile(width_axis_values, OBJECT_WIDTH_PERCENTILE_HIGH)
+            - np.percentile(width_axis_values, OBJECT_WIDTH_PERCENTILE_LOW)
+        )
+        vertical_target_width = measured_width_mm + VERTICAL_GRIP_WIDTH_MARGIN_MM
+        vertical_target_width_cmd = int(max(0.0, min(vertical_target_width * 10.0, 1100.0)))
+        vertical_x = measured_center_x + VERTICAL_X_OFFSET_MM
+        vertical_y = measured_center_y + VERTICAL_Y_OFFSET_MM
+        vertical_pregrasp_z = object_top_z + VERTICAL_APPROACH_CLEARANCE_MM
+        raw_vertical_pick_z = object_top_z - VERTICAL_TOP_GRASP_DEPTH_MM + VERTICAL_DEPTH_Z_BIAS_MM
+        vertical_pick_z = max(raw_vertical_pick_z, floor_z + MIN_PICK_ABOVE_FLOOR_MM)
+
+        self.get_logger().info(
+            "[Pick_Item] depth 수직 재파지 추정: "
+            f"projected_px={projected_px}, floor_z={floor_z:.1f}({floor_source}), "
+            f"top_z={object_top_z:.1f}, height={object_height_mm:.1f}, "
+            f"center=({measured_center_x:.1f}, {measured_center_y:.1f}), "
+            f"center_error={center_error:.1f}, width={measured_width_mm:.1f}, "
+            f"gripper={vertical_target_width_cmd / 10.0:.1f}mm, "
+            f"pregrasp_z={vertical_pregrasp_z:.1f}, pick_z={vertical_pick_z:.1f}"
+        )
+
+        return {
+            "vertical_x": vertical_x,
+            "vertical_y": vertical_y,
+            "vertical_pregrasp_z": vertical_pregrasp_z,
+            "vertical_pick_z": vertical_pick_z,
+            "vertical_target_width_cmd": vertical_target_width_cmd,
+        }
+
+    def get_current_dsr_pose(self):
+        with self.robot.get_planning_scene_monitor().read_only() as scene:
+            state = scene.current_state
+            state.update()
+            transform = np.array(state.get_frame_transform(EE_LINK), dtype=float)
+
+        xyz_mm = transform[:3, 3] * 1000.0
+        rpy = Rotation.from_matrix(transform[:3, :3]).as_euler("ZYZ", degrees=True)
+        return [
+            float(xyz_mm[0]),
+            float(xyz_mm[1]),
+            float(xyz_mm[2]),
+            float(rpy[0]),
+            float(rpy[1]),
+            float(rpy[2]),
+        ]
+
+    def to_pose_stamped(self, dsr_pose):
+        quat = Rotation.from_euler("ZYZ", dsr_pose[3:], degrees=True).as_quat()
+
+        pose = PoseStamped()
+        pose.header.frame_id = BASE_FRAME
+        pose.pose.position.x = dsr_pose[0] / 1000.0
+        pose.pose.position.y = dsr_pose[1] / 1000.0
+        pose.pose.position.z = dsr_pose[2] / 1000.0
+        pose.pose.orientation.x = quat[0]
+        pose.pose.orientation.y = quat[1]
+        pose.pose.orientation.z = quat[2]
+        pose.pose.orientation.w = quat[3]
+        return pose
+
+    def make_plan_params(self, planner_id):
+        req_params = PlanRequestParameters(self.robot)
+        req_params.planning_pipeline = "pilz_industrial_motion_planner"
+        req_params.planner_id = planner_id
+        req_params.max_velocity_scaling_factor = VELOCITY_SCALE
+        req_params.max_acceleration_scaling_factor = ACCELERATION_SCALE
+        req_params.planning_time = 2.0
+        return req_params
+
+    def build_joint_constraints(self, joint_goal):
+        constraints = Constraints()
+        for joint_name in JOINT_NAMES:
+            joint_constraint = JointConstraint()
+            joint_constraint.joint_name = joint_name
+            joint_constraint.position = joint_goal[joint_name]
+            joint_constraint.tolerance_above = 0.001
+            joint_constraint.tolerance_below = 0.001
+            joint_constraint.weight = 1.0
+            constraints.joint_constraints.append(joint_constraint)
+        return [constraints]
+
+    def plan_and_execute_joints(self, joint_goal):
+        try:
+            self.arm.set_start_state_to_current_state()
+            self.arm.set_goal_state(motion_plan_constraints=self.build_joint_constraints(joint_goal))
+            plan_result = self.arm.plan(parameters=self.make_plan_params("PTP"))
+            if not plan_result:
+                self.get_logger().error(f"[Pick_Item] joint planning failed: {joint_goal}")
+                return False
+
+            self.robot.execute(
+                group_name=GROUP_NAME,
+                robot_trajectory=plan_result.trajectory,
+                blocking=True,
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"[Pick_Item] joint 계획/실행 중 예외 발생: {e}")
+            return False
+
+    def move_to_ready_pose(self):
+        self.get_logger().info("[Pick_Item] 카메라 관측 자세(JReady)로 이동 중")
+        if not self.plan_and_execute_joints(self.joints_ready):
+            return False
+        if self.gripper is not None:
+            self.gripper.open_gripper()
+        self.get_logger().info("[Pick_Item] JReady 이동 완료. YOLO 탐지 대기 자세입니다.")
+        return True
+
+    def plan_and_execute_pose(self, dsr_pose, planner_id="PTP"):
+        try:
+            self.arm.set_start_state_to_current_state()
+            self.arm.set_goal_state(
+                pose_stamped_msg=self.to_pose_stamped(dsr_pose),
+                pose_link=EE_LINK,
+            )
+            plan_result = self.arm.plan(parameters=self.make_plan_params(planner_id))
+            if not plan_result:
+                self.get_logger().error(f"[Pick_Item] {planner_id} planning failed: {dsr_pose}")
+                return False
+
+            self.robot.execute(
+                group_name=GROUP_NAME,
+                robot_trajectory=plan_result.trajectory,
+                blocking=True,
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"[Pick_Item] pose 계획/실행 중 예외 발생: {e}")
+            return False
+
+    def publish_feedback(self, goal_handle, state):
+        feedback_msg = PickItem.Feedback()
+        feedback_msg.state = state
+        goal_handle.publish_feedback(feedback_msg)
+
+    def abort(self, goal_handle, message):
+        self.get_logger().error(message)
+        goal_handle.abort()
+        return PickItem.Result(success=False)
 
     def execute_callback(self, goal_handle):
-        slots = goal_handle.request.get_fields_and_field_types().keys()
-        self.get_logger().info(f"🚨 [인터페이스 디버깅] PickItem_Goal 내부 실제 변수 목록: {list(slots)}")
-        """ 태스크 플래너로부터 목표 픽셀 좌표를 받아 실행되는 핵심 콜백 """
-        # 1) 플래너가 보내준 Goal 데이터 꺼내기 (class_id 변수의 바코드 스트링 추출)
+        self.get_logger().info("[Pick_Item] 피킹 시퀀스 시작")
+
         cx = int(goal_handle.request.center_x)
         cy = int(goal_handle.request.center_y)
-        w = goal_handle.request.width
-        target_h = goal_handle.request.height # 제품의 실제 총 높이 (세로 길이)
-        
-        self.get_logger().info(f"[액션 수신] 피킹 개시 -> 중심:({cx}, {cy})")
+        width_px = float(goal_handle.request.width)
+        height_px = float(goal_handle.request.height)
 
-        # 2) 피드백 발행: 좌표 변환 단계
-        feedback_msg = PickItem.Feedback()
-        feedback_msg.state = "받은 픽셀 좌표를 기반으로 3D 위치 계산 중"
-        goal_handle.publish_feedback(feedback_msg)
+        self.publish_feedback(goal_handle, "받은 픽셀 좌표를 기반으로 3D 위치 계산 중")
 
-        # 3) 최신 뎁스 프레임 읽기 및 3D 변환 수행
         depth_frame = self.img_node.get_depth_frame()
         if depth_frame is None:
-            self.get_logger().error("❌ 뎁스 이미지를 가져올 수 없습니다.")
-            goal_handle.abort()
-            return PickItem.Result(success=False)
+            return self.abort(goal_handle, "[Pick_Item] 뎁스 이미지를 가져올 수 없습니다.")
+        if not (0 <= cy < depth_frame.shape[0] and 0 <= cx < depth_frame.shape[1]):
+            return self.abort(goal_handle, f"[Pick_Item] 픽셀 좌표가 이미지 범위를 벗어났습니다: ({cx}, {cy})")
 
-        z_dist = depth_frame[cy, cx]
-        if z_dist == 0:
-            self.get_logger().error("❌ 선택된 좌표의 뎁스(거리) 값이 0입니다. 파지를 취소합니다.")
-            goal_handle.abort()
-            return PickItem.Result(success=False)
+        z_dist = float(depth_frame[cy, cx])
+        if z_dist <= 0.0:
+            return self.abort(goal_handle, "[Pick_Item] 선택된 좌표의 뎁스 값이 0입니다.")
 
-        # 카메라 기준 좌표 -> 로봇 베이스 기준 3D 좌표 변환
-        capture_pose = get_current_posx()[0]
-        fx, fy = self.intrinsics["fx"], self.intrinsics["fy"]
-        ppx, ppy = self.intrinsics["ppx"], self.intrinsics["ppy"]
-        
-        cam_coords = ((cx - ppx) * z_dist / fx, (cy - ppy) * z_dist / fy, z_dist)
+        fx = self.intrinsics["fx"]
+        fy = self.intrinsics["fy"]
+        ppx = self.intrinsics["ppx"]
+        ppy = self.intrinsics["ppy"]
+
+        capture_pose = self.get_current_dsr_pose()
+        cam_coords = (
+            (cx - ppx) * z_dist / fx,
+            (cy - ppy) * z_dist / fy,
+            z_dist,
+        )
         base_xyz = self.transform_to_base(cam_coords, capture_pose)
 
-        # -----------------------------------------------------------------
-        # 🎯 [실측값 일대일 매칭 수립] 제품 바코드별 정밀 목표 파지 너비 지정 (0.1mm 단위)
-        # -----------------------------------------------------------------
-        obj_width_mm = (w * z_dist) / fx
-
-        target_w = int(obj_width_mm * 10 * SQUEEZE_RATIO)
-
-        # RG2 허용 범위 제한
-        target_w = max(0, min(target_w, 1100))
+        obj_width_mm = width_px * z_dist / fx
+        obj_height_mm = height_px * z_dist / fy
+        target_width = int(obj_width_mm * 10.0 * SQUEEZE_RATIO)
+        target_width = max(0, min(target_width, 1100))
 
         self.get_logger().info(
-            f"🎯 변환 완료 -> "
-            f"베이스 좌표: {base_xyz} | "
-            f"예상 두께: {obj_width_mm:.1f}mm | "
-            f"목표 폭: {target_w/10:.1f}mm"
+            "[Pick_Item] 변환 완료 -> "
+            f"base=({base_xyz[0]:.1f}, {base_xyz[1]:.1f}, {base_xyz[2]:.1f})mm, "
+            f"width={obj_width_mm:.1f}mm, height={obj_height_mm:.1f}mm, "
+            f"gripper={target_width / 10.0:.1f}mm"
         )
 
-        # 4) 로봇 실제 구동 (블로킹 방식으로 순차 실행)
         try:
-            # 수평 피킹부터 시작하여 바닥 안착 후 수직 피킹까지 원스톱으로 이어지는 마스터 시퀀스 실행
-
-            
-            self.execute_pick_motion(*base_xyz, target_w, target_h, goal_handle)
-            
-            # 모든 동작 성공적 종료 시
-            goal_handle.succeed()
-            self.get_logger().info("✅ >>> 전체 피킹/안착/수직 재피킹 작업 성공 및 플래너에 완료 보고")
-            return PickItem.Result(success=True)
-            
+            self.execute_pick_motion(*base_xyz, target_width, obj_height_mm, goal_handle)
         except Exception as e:
-            self.get_logger().error(f"❌ 로봇 구동 중 에러 발생: {e}")
-            goal_handle.abort()
-            return PickItem.Result(success=False)
+            return self.abort(goal_handle, f"[Pick_Item] 로봇 구동 중 에러 발생: {e}")
 
-    def execute_pick_motion(self, x, y, z, target_width, target_height, goal_handle):
-        """ 수평 피킹 -> 바닥 안착 -> 수직 전환 측정 -> 수직 파지 통합 시퀀스 """
-        cur = get_current_posx()[0]
-        fixed_rx, fixed_ry, fixed_rz = cur[3:]
-        
-        # 언팩 에러 예방용 예외 처리
-        if self.home_pose is None:
-            self.home_pose = cur
-        hx, hy, hz, hrx, hry, hrz = self.home_pose
-        
+        goal_handle.succeed()
+        self.get_logger().info("[Pick_Item] 전체 피킹/안착/수직 재피킹 작업 성공")
+        return PickItem.Result(success=True)
+
+    def execute_pick_motion(self, x, y, z, target_width, obj_height_mm, goal_handle):
+        if self.gripper is None:
+            raise RuntimeError("그리퍼가 연결되지 않았습니다.")
+
+        current_pose = self.get_current_dsr_pose()
+        fixed_rx, fixed_ry, fixed_rz = current_pose[3:]
+
         self.gripper.open_gripper()
-        feedback_msg = PickItem.Feedback()
+        time.sleep(0.5)
 
-        # Step 1. 접근 대기 (X축 후방 대기)
-        feedback_msg.state = "물품 정면(접근 위치)으로 이동 중"
-        goal_handle.publish_feedback(feedback_msg)
-        
         wait_x = x - (X_OFFSET + SIDE_APPROACH_DIST)
-        movel(posx([wait_x, y, z, fixed_rx, fixed_ry, fixed_rz]), VELOCITY, ACC)
-        wait(0.5)
+        pick_x = x - X_OFFSET + 5.0
 
-        # Step 2. 진입 (수평 찌르기)
-        feedback_msg.state = "그립 처리를 위해 물품으로 진입 중"
-        goal_handle.publish_feedback(feedback_msg)
-        
-        pick_x = x - X_OFFSET  + 5 
-        movel(posx([pick_x, y, z, fixed_rx, fixed_ry, fixed_rz]), 20, 20)
-        
-        # Step 3. 파지
-        feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
-        goal_handle.publish_feedback(feedback_msg)
-        
+        approach_pose = [wait_x, y, z, fixed_rx, fixed_ry, fixed_rz]
+        pick_pose = [pick_x, y, z, fixed_rx, fixed_ry, fixed_rz]
+
+        self.publish_feedback(goal_handle, "물품 정면 접근 위치로 이동 중")
+        if not self.plan_and_execute_pose(approach_pose, planner_id="PTP"):
+            raise RuntimeError("접근 대기 위치 이동 실패")
+        time.sleep(0.2)
+
+        self.publish_feedback(goal_handle, "그립 처리를 위해 물품으로 진입 중")
+        if not self.plan_and_execute_pose(pick_pose, planner_id="LIN"):
+            raise RuntimeError("수평 진입 이동 실패")
+        time.sleep(0.2)
+
+        self.publish_feedback(goal_handle, f"물품 파지 중 (실측 보정 너비: {target_width / 10.0:.1f}mm)")
         self.gripper.move_gripper(width_val=target_width)
-        wait(1.2)
+        time.sleep(1.2)
 
-        # Step 4. 후퇴 (뒤로 빠지기)
-        
+        self.publish_feedback(goal_handle, "파지 완료 후 후방으로 후퇴 중")
+        if not self.plan_and_execute_pose(approach_pose, planner_id="LIN"):
+            raise RuntimeError("후퇴 이동 실패")
+        time.sleep(0.2)
 
-        feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
-        goal_handle.publish_feedback(feedback_msg)
-        movel(
-            posx([wait_x, y, z,
-                fixed_rx, fixed_ry, fixed_rz]),
-            VELOCITY,
-            ACC
-        )
+        place_x, place_y = approach_pose[0], approach_pose[1]
+        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) + PLACE_Z_BIAS_MM
+        place_pose = [place_x, place_y, place_z, fixed_rx, fixed_ry, fixed_rz]
 
-        # ---------------------------------------------------------------------
-        # 로직 1) 수평으로 잡은 물품을 바닥에 사뿐히 내려놓는다
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "수평 홈 위치 이동 및 정렬..."
-        goal_handle.publish_feedback(feedback_msg)
-        movel(self.pos_home_horiz, VELOCITY, ACC)
-        wait(0.5)
+        self.publish_feedback(goal_handle, "후퇴 위치에서 Z축만 내려 물품을 바닥에 놓는 중")
+        if not self.plan_and_execute_pose(place_pose, planner_id="LIN"):
+            raise RuntimeError("바닥 내려놓기 이동 실패")
+        time.sleep(0.5)
 
-        # 유연 제어 활성화 (Z축 강성 600으로 진동 억제)
-        task_compliance_ctrl([3000, 3000, 600, 200, 200, 200])
-        
-        # 정확한 안착 TCP Z 높이 계산
-        exact_place_z = REAL_TABLE_Z + (target_height / 2.0)
-        
-        cur_p = get_current_posx()[0] 
-        overdrive_pose = posx([cur_p[0], cur_p[1], exact_place_z - 5.0, cur_p[3], cur_p[4], cur_p[5]])
-        
-        amovel(overdrive_pose, vel=4, acc=10)
-        wait(0.5) 
-
-        start_time = time.time()
-        while rclpy.ok():
-            current_pos = get_current_posx()[0]
-            current_z = current_pos[2]       # 실시간 Z 좌표
-
-            if current_z <= exact_place_z:
-                movel(current_pos, vel=1, acc=300) 
-                self.get_logger().info(f"✅ [바닥 안착 성공] Z: {current_z:.2f}mm")
-                break
-                
-            if (time.time() - start_time) > 2.0:
-                movel(current_pos, vel=1, acc=300)
-                self.get_logger().info("시간 아웃으로 그리퍼 오픈")
-                break
-            wait(0.01)
-            
-        wait(0.3) 
-
-        # ---------------------------------------------------------------------
-        # 로직 2) 그리퍼를 연다
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "그리퍼 개방 중..."
-        goal_handle.publish_feedback(feedback_msg)
+        self.publish_feedback(goal_handle, "그리퍼 개방 중")
         self.gripper.open_gripper()
-        wait(1.0) 
+        time.sleep(1.0)
 
-        # 🔥 [정밀 수정] 다음 정밀 이동 시 로봇 관절 강성 잠금 풀림 방지를 위해 유연 제어 명시적 해제
-        release_compliance_ctrl()
-        wait(0.2)
+        lift_after_place_pose = list(place_pose)
+        lift_after_place_pose[2] = place_z + VERTICAL_LIFT_BEFORE_ROTATE_MM
+        self.publish_feedback(goal_handle, "수직 자세 전환 전 Z축 상승 중")
+        if not self.plan_and_execute_pose(lift_after_place_pose, planner_id="LIN"):
+            raise RuntimeError("수직 자세 전환 전 상승 실패")
+        time.sleep(0.2)
 
-        # ---------------------------------------------------------------------
-        # 로직 3) 수직 관측 자세로 전환 중
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "수직 관측 자세로 전환 중..."
-        goal_handle.publish_feedback(feedback_msg)
-        
-        cur = get_current_posx()[0]
+        vertical_safe_pose = [place_x, place_y, lift_after_place_pose[2], *VERTICAL_RPY]
+        self.publish_feedback(goal_handle, "그리퍼를 수직 방향으로 전환 중")
+        if not self.plan_and_execute_pose(vertical_safe_pose, planner_id="PTP"):
+            raise RuntimeError("수직 자세 전환 실패")
+        time.sleep(0.5)
 
-        movel(posx([
-            cur[0],
-            cur[1],
-            cur[2] + 300,
-            cur[3],
-            cur[4],
-            cur[5]
-        ]), VELOCITY, ACC)
-
-        movej(self.pos_home_vert, VELOCITY, ACC)
-        jpos = get_current_posj()[0]
-
-        feedback_msg.state = f"{get_current_posj()}"
-        goal_handle.publish_feedback(feedback_msg)
-
-        wait(1.0) # 비전 카메라 상 흔들림 억제를 위한 안정화 대기 추가
-
-
-        # ---------------------------------------------------------------------
-        # 로직 4) Depth 기반 캔(또는 재배치 물품) 위치 측정
-        # ---------------------------------------------------------------------
-        '''
-        feedback_msg.state = "Depth 기반 재측정 및 추적 중..."
-        goal_handle.publish_feedback(feedback_msg)
-
-        depth_frame = self.img_node.get_depth_frame()
-        if depth_frame is None:
-            raise RuntimeError("Depth frame 없음")
-
-        h, w = depth_frame.shape
-        center_x = w // 2
-        center_y = h // 2
-        ROI_SIZE = 60
-
-        x1 = max(0, center_x - ROI_SIZE)
-        x2 = min(w, center_x + ROI_SIZE)
-        y1 = max(0, center_y - ROI_SIZE)
-        y2 = min(h, center_y + ROI_SIZE)
-
-        roi = depth_frame[y1:y2, x1:x2]
-        valid_mask = roi > 0
-
-        if np.count_nonzero(valid_mask) == 0:
-            raise RuntimeError("ROI 내부에 유효 Depth 없음")
-
-        masked_depth = np.where(valid_mask, roi, 999999)
-        local_y, local_x = np.unravel_index(np.argmin(masked_depth), roi.shape)
-
-        target_px = x1 + local_x
-        target_py = y1 + local_y
-        z_dist = depth_frame[target_py, target_px]
-
-        fx, fy = self.intrinsics["fx"], self.intrinsics["fy"]
-        ppx, ppy = self.intrinsics["ppx"], self.intrinsics["ppy"]
-
-        cam_coords = ((target_px - ppx) * z_dist / fx, (target_py - ppy) * z_dist / fy, z_dist)
-        
-        # 💡 현재 도달해 있는 절대 수직 자세(pos_home_vert) 기준 카메라 좌표 변환
-        capture_pose = get_current_posx()[0]
-        base_xyz = self.transform_to_base(cam_coords, capture_pose)
-        
-        # X, Y 이동은 펜던트로 맞춘 절대 위치(self.pos_home_vert)를 고정 유지하고, Z만 비전 실측값 수송
-        target_x = self.pos_home_vert[0]
-        target_y = self.pos_home_vert[1]
-        target_z = base_xyz[2] 
-
-        self.get_logger().info(
-            f"ROI 추적 및 Z축 매핑 성공 -> "
-            f"고정X: {target_x:.1f}, 고정Y: {target_y:.1f}, 실측 정점Z: {target_z:.1f}"
+        self.publish_feedback(goal_handle, "Depth 기반으로 물품 중심과 높이를 재측정 중")
+        vertical_grasp = self.estimate_vertical_grasp_from_depth(
+            place_x,
+            place_y,
+            place_z,
+            vertical_safe_pose,
         )
 
-        # ---------------------------------------------------------------------
-        # 로직 5) 상부 접근 (새 수직 각도 적용)
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "캔 상부 접근 중..."
-        goal_handle.publish_feedback(feedback_msg)
+        vertical_pregrasp_pose = [
+            vertical_grasp["vertical_x"],
+            vertical_grasp["vertical_y"],
+            vertical_grasp["vertical_pregrasp_z"],
+            *VERTICAL_RPY,
+        ]
+        vertical_pick_pose = [
+            vertical_grasp["vertical_x"],
+            vertical_grasp["vertical_y"],
+            vertical_grasp["vertical_pick_z"],
+            *VERTICAL_RPY,
+        ]
 
-        approach_pose = posx([
-            target_x,
-            target_y,
-            target_z + 80.0,
-            1.04,        # 💡 새로 정의하신 절대 수직 rx
-            178.40,      # 💡 새로 정의하신 절대 수직 ry
-            93.34        # 💡 새로 정의하신 절대 수직 rz
-        ])
+        self.publish_feedback(goal_handle, "Depth 측정 위치 기준으로 물품 바로 위로 이동 중")
+        if not self.plan_and_execute_pose(vertical_pregrasp_pose, planner_id="PTP"):
+            raise RuntimeError("수직 재파지 상단 이동 실패")
+        time.sleep(0.2)
 
-        movel(approach_pose, VELOCITY, ACC)
-        wait(1.0)
+        self.publish_feedback(goal_handle, "수직 방향으로 물품을 다시 파지 중")
+        if not self.plan_and_execute_pose(vertical_pick_pose, planner_id="LIN"):
+            raise RuntimeError("수직 파지 위치 하강 실패")
+        time.sleep(0.2)
 
-        # ---------------------------------------------------------------------
-        # 로직 6) 수직 집기 (height 기반 상단 끝단 파지 구현)
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "height 기반 상단 끝단 파지 위치로 하강 중..."
-        goal_handle.publish_feedback(feedback_msg)
-        
-        # 💡 플래너가 준 실제 물체 높이(target_height)의 20% 지점만큼 정점(Top)에서 더 내려갑니다.
-        # 예: 캔 높이가 120mm이면 윗면에서 24mm 더 아래로 그리퍼 패드를 밀어 넣어 상단을 움켜잡습니다.
-        grab_depth_offset = 30
-        
-        pick_pose = posx([
-            target_x,
-            target_y,
-            target_z + grab_depth_offset, # 💡 정점 기준 height 매개변수 기반 오프셋 다운
-            1.04,
-            178.40,
-            93.34
-        ])
+        self.gripper.move_gripper(width_val=vertical_grasp["vertical_target_width_cmd"])
+        time.sleep(1.2)
 
-        movel(pick_pose, 10, 10)
-        wait(0.2)
-        '''
-        feedback_msg.state = "제자리 즉시 파지 중..."
-        goal_handle.publish_feedback(feedback_msg)
-
-        self.gripper.move_gripper(width_val=target_width)
-        wait(1.2)
-        # ---------------------------------------------------------------------
-        # 🔥 [필수 추가] 로직 7) 들어올리기ter
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "수직 피킹 완료 후 들어올리는 중..."
-        goal_handle.publish_feedback(feedback_msg)
-
-        # 파지한 상태 그대로 일직선으로 들어 올릴 수 있도록 회전각을 1.04, 178.40, 93.34로 변경합니다.
-        p_lift = get_current_posx()[0]
-
-        # 💡 X, Y축과 손목 각도(rx, ry, rz)는 100% 고정한 상태에서 오직 Z축만 +120mm 수직 상승시킵니다.
-        lift_pose = posx([
-            p_lift[0],              # 현재 X 그대로 유지
-            p_lift[1],              # 현재 Y 그대로 유지
-            p_lift[2] + 120.0,      # 현재 움켜쥔 높이 기준에서 정확히 120mm 수직 상승
-            p_lift[3],              # 현재 rx 그대로 (관절 비틀림 원천 차단)
-            p_lift[4],              # 현재 ry 그대로
-            p_lift[5]               # 현재 rz 그대로
-        ])
-
-        movel(lift_pose, VELOCITY, ACC)
-        wait(0.5)
+        final_lift_pose = list(vertical_pick_pose)
+        final_lift_pose[2] += FINAL_LIFT_MM
+        self.publish_feedback(goal_handle, f"수직 피킹 완료 후 {FINAL_LIFT_MM:.0f}mm 상승 중")
+        if not self.plan_and_execute_pose(final_lift_pose, planner_id="LIN"):
+            raise RuntimeError("최종 상승 이동 실패")
+        time.sleep(0.5)
 
     def run(self):
-        """ 로봇 초기 자세 세팅 및 ROS2 멀티스레드 스핀 가동 """
-        self.get_logger().info("로봇 초기 위치(JReady) 설정 중")
-        movej(self.JReady, VELOCITY, ACC)
-        wait(1.0)
-        self.home_pose = get_current_posx()[0]
-        self.gripper.open_gripper()
-        self.get_logger().info("🤖 연쇄 하이브리드 피킹 시스템 준비 완료. 플래너 명령을 기다립니다.")
-
         executor = MultiThreadedExecutor()
         executor.add_node(self)
         executor.add_node(self.img_node)
         executor.spin()
 
-def main():
+
+def main(args=None):
+    rclpy.init(args=args)
+    server = PickItemServer()
     try:
-        server = PickItemServer()
         server.run()
     except KeyboardInterrupt:
-        print("\n사용자에 의해 종료되었습니다.")
+        pass
     finally:
+        server.destroy_node()
+        server.img_node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
