@@ -17,6 +17,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from abc_interfaces.action import PickItem
 
+import cv2
 # ======================
 # 1. 로봇 및 ROS2 초기 설정
 # ======================
@@ -43,7 +44,7 @@ except ImportError:
 # 2. 시스템 파라미터 설정
 # ======================
 X_OFFSET = 185.0            # 그리퍼 중심 보정 (mm)
-SIDE_APPROACH_DIST = 100.0  # 물체 정면 대기 거리 (mm)
+SIDE_APPROACH_DIST = 180.0  # 물체 정면 대기 거리 (mm)
 SAFE_Z = 400.0              # 이동 안전 높이
 SQUEEZE_RATIO = 0.95
 REAL_TABLE_Z = 5.0          # 티칭 펜던트로 측정한 실제 진열대 바닥의 Z 좌표
@@ -78,6 +79,7 @@ class PickItemServer(Node):
         self.pos_home_vert  = posj([0, -20, 120, 0, 15, 90]) 
         '''
         self.pos_home_horiz = posx([431.39, 13.76, 112.90, 178.23, -90.00, -86.81])    
+        
         self.pos_home_vert = posj([
             0.228,
             40.153,
@@ -85,7 +87,17 @@ class PickItemServer(Node):
             0.155,
             89.955,
             92.466
-        ])          
+        ]) 
+        '''
+        self.pos_home_vert = posj([
+            3,
+            26.06,
+            44.64,
+            -2.57,
+            109.11,
+            94.13
+        ])   
+        '''       
         #self.pos_home_vert  = posx([635.02, 8.2, 337.79, 1.04, 178.40, 93.34])
 
         self.home_pose = None
@@ -174,7 +186,7 @@ class PickItemServer(Node):
             # 수평 피킹부터 시작하여 바닥 안착 후 수직 피킹까지 원스톱으로 이어지는 마스터 시퀀스 실행
 
             
-            self.execute_pick_motion(*base_xyz, target_w, target_h, goal_handle)
+            self.execute_pick_motion(*base_xyz, target_w, target_h, z_dist, goal_handle)
             
             # 모든 동작 성공적 종료 시
             goal_handle.succeed()
@@ -186,7 +198,7 @@ class PickItemServer(Node):
             goal_handle.abort()
             return PickItem.Result(success=False)
 
-    def execute_pick_motion(self, x, y, z, target_width, target_height, goal_handle):
+    def execute_pick_motion(self, x, y, z, target_width, target_height, z_dist, goal_handle):
         """ 수평 피킹 -> 바닥 안착 -> 수직 전환 측정 -> 수직 파지 통합 시퀀스 """
         cur = get_current_posx()[0]
         fixed_rx, fixed_ry, fixed_rz = cur[3:]
@@ -212,64 +224,54 @@ class PickItemServer(Node):
         goal_handle.publish_feedback(feedback_msg)
         
         pick_x = x - X_OFFSET  + 5 
-        movel(posx([pick_x, y, z, fixed_rx, fixed_ry, fixed_rz]), 20, 20)
+        movel(posx([pick_x, y, z, fixed_rx, fixed_ry, fixed_rz]), VELOCITY, ACC)
         
         # Step 3. 파지
         feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
         goal_handle.publish_feedback(feedback_msg)
+        self.get_logger().info(
+            f"[DEBUG] grip done current_pos={get_current_posx()[0]}"
+        )
         
+
+
+        self.get_logger().info(f"[DEBUG] target_width={target_width} ({target_width/10:.1f}mm)")
         self.gripper.move_gripper(width_val=target_width)
         wait(1.2)
-
+        self.get_logger().info(
+            f"wait_x={wait_x}, pick_x={pick_x}"
+        )
         # Step 4. 후퇴 (뒤로 빠지기)
-        
-
         feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
         goal_handle.publish_feedback(feedback_msg)
+
         movel(
-            posx([wait_x, y, z,
+            posx([wait_x, y,z,
                 fixed_rx, fixed_ry, fixed_rz]),
             VELOCITY,
             ACC
+        )
+        wait(1.2)
+        self.get_logger().info(
+            f"[DEBUG] retreat finished current={get_current_posx()[0]}"
         )
 
         # ---------------------------------------------------------------------
         # 로직 1) 수평으로 잡은 물품을 바닥에 사뿐히 내려놓는다
         # ---------------------------------------------------------------------
-        feedback_msg.state = "수평 홈 위치 이동 및 정렬..."
+        feedback_msg.state = "후퇴 위치에서 내려놓는 중..."
         goal_handle.publish_feedback(feedback_msg)
-        movel(self.pos_home_horiz, VELOCITY, ACC)
+        wait(1.0)
+
+        fy = self.intrinsics["fy"]
+        obj_height_mm = (target_height * z_dist) / fy
+        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) +20.0  # 반높이보다 20mm 더 아래
+    
+        self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
+        place_pose = posx([wait_x, 13.76, place_z, fixed_rx, fixed_ry, fixed_rz])
+        movel(place_pose, VELOCITY, ACC)
         wait(0.5)
 
-        # 유연 제어 활성화 (Z축 강성 600으로 진동 억제)
-        task_compliance_ctrl([3000, 3000, 600, 200, 200, 200])
-        
-        # 정확한 안착 TCP Z 높이 계산
-        exact_place_z = REAL_TABLE_Z + (target_height / 2.0)
-        
-        cur_p = get_current_posx()[0] 
-        overdrive_pose = posx([cur_p[0], cur_p[1], exact_place_z - 5.0, cur_p[3], cur_p[4], cur_p[5]])
-        
-        amovel(overdrive_pose, vel=4, acc=10)
-        wait(0.5) 
-
-        start_time = time.time()
-        while rclpy.ok():
-            current_pos = get_current_posx()[0]
-            current_z = current_pos[2]       # 실시간 Z 좌표
-
-            if current_z <= exact_place_z:
-                movel(current_pos, vel=1, acc=300) 
-                self.get_logger().info(f"✅ [바닥 안착 성공] Z: {current_z:.2f}mm")
-                break
-                
-            if (time.time() - start_time) > 2.0:
-                movel(current_pos, vel=1, acc=300)
-                self.get_logger().info("시간 아웃으로 그리퍼 오픈")
-                break
-            wait(0.01)
-            
-        wait(0.3) 
 
         # ---------------------------------------------------------------------
         # 로직 2) 그리퍼를 연다
@@ -278,10 +280,6 @@ class PickItemServer(Node):
         goal_handle.publish_feedback(feedback_msg)
         self.gripper.open_gripper()
         wait(1.0) 
-
-        # 🔥 [정밀 수정] 다음 정밀 이동 시 로봇 관절 강성 잠금 풀림 방지를 위해 유연 제어 명시적 해제
-        release_compliance_ctrl()
-        wait(0.2)
 
         # ---------------------------------------------------------------------
         # 로직 3) 수직 관측 자세로 전환 중
@@ -312,99 +310,123 @@ class PickItemServer(Node):
         # ---------------------------------------------------------------------
         # 로직 4) Depth 기반 캔(또는 재배치 물품) 위치 측정
         # ---------------------------------------------------------------------
-        '''
-        feedback_msg.state = "Depth 기반 재측정 및 추적 중..."
+        feedback_msg.state = "Depth 기반 물체 검출 중..."
         goal_handle.publish_feedback(feedback_msg)
-
+ 
         depth_frame = self.img_node.get_depth_frame()
         if depth_frame is None:
             raise RuntimeError("Depth frame 없음")
-
-        h, w = depth_frame.shape
-        center_x = w // 2
-        center_y = h // 2
-        ROI_SIZE = 60
-
-        x1 = max(0, center_x - ROI_SIZE)
-        x2 = min(w, center_x + ROI_SIZE)
-        y1 = max(0, center_y - ROI_SIZE)
-        y2 = min(h, center_y + ROI_SIZE)
-
-        roi = depth_frame[y1:y2, x1:x2]
-        valid_mask = roi > 0
-
-        if np.count_nonzero(valid_mask) == 0:
-            raise RuntimeError("ROI 내부에 유효 Depth 없음")
-
-        masked_depth = np.where(valid_mask, roi, 999999)
-        local_y, local_x = np.unravel_index(np.argmin(masked_depth), roi.shape)
-
-        target_px = x1 + local_x
-        target_py = y1 + local_y
-        z_dist = depth_frame[target_py, target_px]
-
-        fx, fy = self.intrinsics["fx"], self.intrinsics["fy"]
-        ppx, ppy = self.intrinsics["ppx"], self.intrinsics["ppy"]
-
-        cam_coords = ((target_px - ppx) * z_dist / fx, (target_py - ppy) * z_dist / fy, z_dist)
-        
-        # 💡 현재 도달해 있는 절대 수직 자세(pos_home_vert) 기준 카메라 좌표 변환
+ 
+        h_d, w_d = depth_frame.shape
+        fx = self.intrinsics["fx"]
+        fy = self.intrinsics["fy"]
+        ppx = self.intrinsics["ppx"]
+        ppy = self.intrinsics["ppy"]
+ 
+        # 테이블 depth 추정: 프레임 가장자리 50px 띠의 중앙값
+        border = 50
+        edges = np.concatenate([
+            depth_frame[:border, :].ravel(),
+            depth_frame[-border:, :].ravel(),
+            depth_frame[:, :border].ravel(),
+            depth_frame[:, -border:].ravel(),
+        ])
+        edges_valid = edges[edges > 0]
+        if len(edges_valid) == 0:
+            raise RuntimeError("테이블 depth 추정 실패")
+        floor_mm = float(np.median(edges_valid))
+ 
+        # 물체 마스크: 테이블보다 20mm 이상 가까운 영역
+        diff = floor_mm - depth_frame.astype(np.float32)
+        mask = ((diff > 20) & (depth_frame > 0)).astype(np.uint8) * 255
+ 
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+ 
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            raise RuntimeError("물체 검출 실패")
+ 
+        cnt = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(cnt) < 300:
+            raise RuntimeError("검출 영역 너무 작음")
+ 
+        bx, by, bw, bh = cv2.boundingRect(cnt)
+        cx_px = bx + bw // 2
+        cy_px = by + bh // 2
+ 
+        # 물체 표면 depth (중앙값)
+        roi_depth = depth_frame[by:by+bh, bx:bx+bw]
+        roi_valid = roi_depth[roi_depth > 0]
+        if len(roi_valid) == 0:
+            raise RuntimeError("물체 ROI 내 유효 depth 없음")
+        obj_surface_mm = float(np.median(roi_valid))
+ 
+        # 물체 실제 너비 & 높이 (mm)
+        obj_width_mm = (bw * obj_surface_mm) / fx
+        obj_height_mm = floor_mm - obj_surface_mm  # 물체 수직 높이
+ 
+        self.get_logger().info(
+            f"📦 물체 검출: center_px=({cx_px},{cy_px}) "
+            f"너비={obj_width_mm:.1f}mm 높이={obj_height_mm:.1f}mm "
+            f"표면depth={obj_surface_mm:.1f}mm 바닥depth={floor_mm:.1f}mm"
+        )
+ 
+        # 카메라 좌표 → 로봇 베이스 좌표 변환
+        cam_coords = (
+            (cx_px - ppx) * obj_surface_mm / fx,
+            (cy_px - ppy) * obj_surface_mm / fy,
+            obj_surface_mm
+        )
         capture_pose = get_current_posx()[0]
         base_xyz = self.transform_to_base(cam_coords, capture_pose)
-        
-        # X, Y 이동은 펜던트로 맞춘 절대 위치(self.pos_home_vert)를 고정 유지하고, Z만 비전 실측값 수송
-        target_x = self.pos_home_vert[0]
-        target_y = self.pos_home_vert[1]
-        target_z = base_xyz[2] 
-
+ 
+        target_x = base_xyz[0]
+        target_y = base_xyz[1]
+        target_z = base_xyz[2]
+ 
+        # 그리퍼 너비 계산 (depth 측정 너비 기준)
+ 
         self.get_logger().info(
-            f"ROI 추적 및 Z축 매핑 성공 -> "
-            f"고정X: {target_x:.1f}, 고정Y: {target_y:.1f}, 실측 정점Z: {target_z:.1f}"
+            f"🎯 수직 피킹 목표: X={target_x:.1f} Y={target_y:.1f} Z={target_z:.1f} "
         )
+ 
+        # =================================================================
+        # Step 9. 물체 중심 상부 접근
+        # =================================================================
+        feedback_msg.state = "물체 상부 접근 중..."
+        goal_handle.publish_feedback(feedback_msg)
+ 
+        vert_rx, vert_ry, vert_rz = capture_pose[3], capture_pose[4], capture_pose[5]
+        
 
-        # ---------------------------------------------------------------------
-        # 로직 5) 상부 접근 (새 수직 각도 적용)
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "캔 상부 접근 중..."
+
+ 
+        # =================================================================
+        # Step 10. 하강 & 파지 (물체 높이 기반)
+        # =================================================================
+        feedback_msg.state = f"하강 파지 중... 너비={obj_width_mm:.1f}mm 높이={obj_height_mm:.1f}mm"
         goal_handle.publish_feedback(feedback_msg)
 
-        approach_pose = posx([
-            target_x,
-            target_y,
-            target_z + 80.0,
-            1.04,        # 💡 새로 정의하신 절대 수직 rx
-            178.40,      # 💡 새로 정의하신 절대 수직 ry
-            93.34        # 💡 새로 정의하신 절대 수직 rz
-        ])
 
-        movel(approach_pose, VELOCITY, ACC)
-        wait(1.0)
+        Z_SYSTEM_MARGIN = 200.0
+        # 물체 높이의 절반 지점을 잡도록 하강
+        grip_z = REAL_TABLE_Z + obj_height_mm + Z_SYSTEM_MARGIN
 
-        # ---------------------------------------------------------------------
-        # 로직 6) 수직 집기 (height 기반 상단 끝단 파지 구현)
-        # ---------------------------------------------------------------------
-        feedback_msg.state = "height 기반 상단 끝단 파지 위치로 하강 중..."
-        goal_handle.publish_feedback(feedback_msg)
         
-        # 💡 플래너가 준 실제 물체 높이(target_height)의 20% 지점만큼 정점(Top)에서 더 내려갑니다.
-        # 예: 캔 높이가 120mm이면 윗면에서 24mm 더 아래로 그리퍼 패드를 밀어 넣어 상단을 움켜잡습니다.
-        grab_depth_offset = 30
-        
+        self.get_logger().info(
+            f"📐 파지 높이 계산: 표면Z={target_z:.1f} - 높이절반={obj_height_mm/2.0:.1f} = grip_z={grip_z:.1f}"
+        )
+ 
         pick_pose = posx([
-            target_x,
-            target_y,
-            target_z + grab_depth_offset, # 💡 정점 기준 height 매개변수 기반 오프셋 다운
-            1.04,
-            178.40,
-            93.34
+            target_x, target_y, grip_z,
+            vert_rx, vert_ry, vert_rz
         ])
-
         movel(pick_pose, 10, 10)
-        wait(0.2)
-        '''
-        feedback_msg.state = "제자리 즉시 파지 중..."
-        goal_handle.publish_feedback(feedback_msg)
-
+        wait(0.3)
+ 
+        # depth 기반 너비로 파지
         self.gripper.move_gripper(width_val=target_width)
         wait(1.2)
         # ---------------------------------------------------------------------
