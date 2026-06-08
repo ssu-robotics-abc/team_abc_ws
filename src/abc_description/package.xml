@@ -4,12 +4,10 @@
   <name>abc_description</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="jihooo7@naver.com">ssu</maintainer>
+  <maintainer email="devminwoolee@gmail.com">minwoolee</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-
-  <depend>xacro</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
