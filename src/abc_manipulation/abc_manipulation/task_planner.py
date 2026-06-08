@@ -1,4 +1,6 @@
 import rclpy
+import requests
+import os
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -7,9 +9,26 @@ from rclpy.executors import MultiThreadedExecutor
 from abc_interfaces.action import PickItem, ScanBarcode, PlaceItem
 from abc_interfaces.srv import UserRequest, RequestItem, ResponseItem
 
+from dotenv import load_dotenv
+from ament_index_python.packages import get_package_share_directory
+
 class TaskPlannerNode(Node):
     def __init__(self):
         super().__init__('task_planner_node')
+
+        package_share_directory = get_package_share_directory('abc_manipulation')
+
+        env_path = os.path.join(package_share_directory, 'config', '.env')
+
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            self.get_logger().info(".env 파일 로드 성공")
+        else:
+            self.get_logger().error(f".env 파일 로드 실패: {env_path}")
+
+        self.web_server_url = os.getenv('WEB_SERVER_URL', 'https://ssu-abc-store-kiosk.ssammwu.info')
+        self.get_logger().info(f"설정된 웹 서버 URL: {self.web_server_url}")
+
         self.cb_group = ReentrantCallbackGroup()
 
         self.vlm_srv = self.create_service(
@@ -62,6 +81,8 @@ class TaskPlannerNode(Node):
             return response
 
         added_items = []
+        post_payload = []
+
         for class_name, count in zip(request.class_name, request.iteration):
             item_name = str(class_name).strip()
             item_count = int(count)
@@ -74,6 +95,11 @@ class TaskPlannerNode(Node):
                 self.get_logger().error(response.message)
                 return response
 
+            post_payload.append({
+                "id": item_name,
+                "amount": item_count
+            })
+
             for _ in range(item_count):
                 self.request_queue.append(item_name)
                 added_items.append(item_name)
@@ -83,6 +109,19 @@ class TaskPlannerNode(Node):
             response.message = "유효한 상품 요청이 없습니다."
             self.get_logger().error(response.message)
             return response
+
+        try:
+            self.get_logger().info(f"상품 정보 서버 POST 준비: {post_payload}")
+
+            res = requests.post(self.web_server_url+"/api/v1/cart", json=post_payload, timeout=5.0)
+
+            if res.status_code in [200, 201]:
+                self.get_logger().info(f"POST 서버 전송 성공")
+            else:
+                self.get_logger().error("POST 서버 전송 실패")
+        except requests.exceptions.RequestException as e:
+            self.get_logger().error(f"서버 POST 통신 에러 {e}")
+
 
         response.success = True
         response.message = f"상품 요청 {len(added_items)}개 접수"
