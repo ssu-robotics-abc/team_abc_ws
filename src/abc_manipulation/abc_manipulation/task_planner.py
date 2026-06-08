@@ -219,7 +219,7 @@ class TaskPlannerNode(Node):
                 self.get_logger().info(">> Place 서버 연결 대기...")
                 if not self.place_client.wait_for_server(timeout_sec=20):
                     self.get_logger().error("Place 서버가 오프라인입니다.")
-                    break
+                    return
 
                 self.get_logger().info(">> place_item 노드 호출: 분류 이송 및 물체 놓기 명령")
 
@@ -233,7 +233,7 @@ class TaskPlannerNode(Node):
                     self.get_logger().info("Place_item 성공! 물체를 지정된 장소에 놓았습니다.")
                 else:
                     self.get_logger().error("Place_item 실패")
-                    break
+                    return
             else:
                 self.get_logger().error("Pick_item 실패")
                 return

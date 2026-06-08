@@ -20,8 +20,8 @@ VELOCITY_SCALE = 0.6
 ACCELERATION_SCALE = 0.6 
 GROUP_NAME = "manipulator"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
-JOINT_6_MIN = -3.14
-JOINT_6_MAX = 3.14
+JOINT_6_MIN = -6.28
+JOINT_6_MAX = 6.28
 
 GRIPPER_NAME = "rg2"
 TOOLCHARGER_IP = "192.168.1.1"
@@ -64,8 +64,8 @@ class ScanBarcodeServer(Node):
             "joint_4": math.radians(0), "joint_5": math.radians(90), "joint_6": math.radians(0)
         }
         self.joints_scanner = {
-            "joint_1": math.radians(-27.84), "joint_2": math.radians(29.23), "joint_3": math.radians(51.69),
-            "joint_4": math.radians(0.0), "joint_5": math.radians(99.11), "joint_6": math.radians(54.72)
+            "joint_1": math.radians(-30.91), "joint_2": math.radians(37.47), "joint_3": math.radians(37.94),
+            "joint_4": math.radians(0.72), "joint_5": math.radians(103.80), "joint_6": math.radians(0)
         }
 
         print("[디버그] 6. ROS 2 통신인터페이스(Action/Topic) 생성 중...")
@@ -131,7 +131,7 @@ class ScanBarcodeServer(Node):
 
     def sweep_joint_6_for_scan(self, start_wait_time, timeout_duration):
         start_j6 = self.joints_scanner["joint_6"]
-        step_rotation = math.radians(20.0)
+        step_rotation = math.radians(10.0)
         scan_goal_joints = self.joints_scanner.copy()
 
         target_positions = self._make_joint_6_scan_positions(start_j6, step_rotation)
@@ -158,24 +158,14 @@ class ScanBarcodeServer(Node):
         return self.is_scanned
 
     def _make_joint_6_scan_positions(self, start_j6, step):
+        # 한 방향으로 360° 한 바퀴 회전
         positions = []
-
-        current = start_j6 + step
-        while current <= JOINT_6_MAX:
-            positions.append(current)
-            current += step
-        if not positions or abs(positions[-1] - JOINT_6_MAX) > 1e-6:
-            positions.append(JOINT_6_MAX)
-
-        positions.append(start_j6)
-
+        end_j6 = start_j6 - math.radians(360.0)
         current = start_j6 - step
-        while current >= JOINT_6_MIN:
+        while current > end_j6:
             positions.append(current)
             current -= step
-        if abs(positions[-1] - JOINT_6_MIN) > 1e-6:
-            positions.append(JOINT_6_MIN)
-
+        positions.append(end_j6)
         return positions
 
     def execute_callback(self, goal_handle):

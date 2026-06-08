@@ -26,9 +26,9 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.3
+VELOCITY_SCALE = 0.1
 ACCELERATION_SCALE = 0.2
-SLOW_VELOCITY_SCALE = 0.1   # 수직 하강 파지 시 저속
+SLOW_VELOCITY_SCALE = 1.0   # 수직 하강 파지 시 저속
 
 X_OFFSET = 185.0
 SIDE_APPROACH_DIST = 180.0
@@ -38,7 +38,7 @@ REAL_TABLE_Z = 5.0
 # pos_home_horiz = [431.39, 13.76, 112.90, 178.23, -90.00, -86.81] 에서 추출한 수평 자세 오리엔테이션
 HORIZ_RX = 178.23
 HORIZ_RY = -90.00
-HORIZ_RZ = -86.81
+HORIZ_RZ = -90.00
 
 
 class PickItemServer(Node):
@@ -267,7 +267,7 @@ class PickItemServer(Node):
         feedback_msg.state = "그립 처리를 위해 물품으로 진입 중"
         goal_handle.publish_feedback(feedback_msg)
 
-        pick_x = x - X_OFFSET + 5
+        pick_x = x - X_OFFSET
         self.plan_and_execute_pose([pick_x, y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
 
         # Step 3: 파지
@@ -283,7 +283,7 @@ class PickItemServer(Node):
         goal_handle.publish_feedback(feedback_msg)
 
         self.plan_and_execute_pose([wait_x, y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
-        time.sleep(1.2)
+        time.sleep(1.0)
         self.get_logger().info("[DEBUG] retreat finished")
 
         # 로직 1: 수평으로 잡은 물품을 바닥에 사뿐히 내려놓는다
@@ -293,10 +293,10 @@ class PickItemServer(Node):
 
         fy = self.intrinsics["fy"]
         obj_height_mm = (target_height * z_dist) / fy
-        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) -10.0
+        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) -5.0
 
         self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
-        self.plan_and_execute_pose([wait_x, 13.76, place_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        self.plan_and_execute_pose([wait_x, 13.76, place_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
         time.sleep(0.5)
 
         # 로직 2: 그리퍼를 연다
