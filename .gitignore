@@ -106,6 +106,8 @@ camera_info/
 # =========================
 # IDE / Editor
 # =========================
+.codex/
+.sixth/
 .vscode/
 .idea/
 *.swp

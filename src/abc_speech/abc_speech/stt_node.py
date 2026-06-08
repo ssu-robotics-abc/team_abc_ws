@@ -90,6 +90,7 @@ class SttNode(Node):
             "펩시",
             "포카리",
             "두유",
+            # "빼빼로",
             "빼빼로 아몬드",
             # "빼빼로 오리지널",
         ]
@@ -100,8 +101,10 @@ class SttNode(Node):
             # "우유":                  "두유",
             "fc":                   "펩시",
             "pepsi":                "펩시",
+            "택시":                  "펩시",
             "pocari":               "포카리",
             "포카리스웨트":            "포카리",
+            "목걸이":                 "포카리",
             # "오카리":                 "포카리",
             # "오카리스웨트":            "포카리",
             "간초":                 "칸쵸",
@@ -109,9 +112,12 @@ class SttNode(Node):
             "칸초":                 "칸쵸",
             "칸죠":                 "칸쵸",
             "한초":                  "칸쵸",
+            "강초롱":                "칸쵸",
+            "광초":                  "칸쵸",
             # "함초":                  "칸쵸",
-            "pepero almond":        "빼빼로",
-            "아몬드 빼빼로":           "빼빼로",
+            "pepero almond":        "빼빼로 아몬드",
+            "아몬드 빼빼로":           "빼빼로 아몬드",
+            "빼빼로 아":               "빼빼로 아몬드",
             # "pepero original":      "빼빼로 오리지널",
             # "오리지널 빼빼로":          "빼빼로 오리지널"
         }
@@ -188,6 +194,7 @@ class SttNode(Node):
 
         try:
             self._start_background_listening()
+            time.sleep(0.2)
             self._play_ready_beep()
 
             self._accepting_speech = True
@@ -283,6 +290,7 @@ class SttNode(Node):
             "줘",
             "죠",
             "조",
+            "요",
         ]
 
         pattern = r"(?:" + "|".join(map(re.escape, trailing_words)) + r")\s*$"
@@ -335,6 +343,7 @@ class SttNode(Node):
             ("하나", 1),
             ("세계", 3),
             ("한", 1),
+            ("wanna", 1),
             ("1", 1),
             ("두", 2),
             ("둘", 2),
@@ -347,7 +356,7 @@ class SttNode(Node):
         remaining = remaining.strip()
 
         for word, quantity in quantity_words:
-            pattern = rf"^{re.escape(word)}\s*(?:개씩|개|씩)?"
+            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩))?(?=\s|$)"
             match = re.match(pattern, remaining)
 
             if not match:
@@ -377,29 +386,14 @@ class SttNode(Node):
             exact_match = None
 
             for p in products:
-                index = remaining.find(p)
-
-                if index < 0:
-                    continue
-
-                if (
-                    exact_match is None
-                    or index < exact_match[1]
-                    or (
-                        index == exact_match[1]
-                        and len(p) > len(exact_match[0])
-                    )
-                ):
-                    exact_match = (p, index)
+                if remaining.startswith(p):
+                    exact_match = p
+                    break
 
             if exact_match:
-                product, index = exact_match
+                product = exact_match
                 self.get_logger().info(f"[product] {product}")
-                remaining = (
-                    remaining[:index]
-                    + " "
-                    + remaining[index + len(product):]
-                )
+                remaining = remaining[len(product):].strip()
 
             # # 2. ambiguous base product
             # self.get_logger().info(f"[===ambiguous base product")
@@ -489,7 +483,7 @@ class SttNode(Node):
 
 
             if not product:
-                if best_score >= 20:
+                if best_score >= 55:
                     self.get_logger().info(f"[STATUS] parse_failed")
                     return {
                         "status": "parse_failed",
@@ -646,15 +640,21 @@ class SttNode(Node):
                 self.get_logger().info("TTS request 성공")
 
                 self._start_background_listening()
+                time.sleep(0.2)
+                self._play_ready_beep()
                 self._accepting_speech = True
                 self.get_logger().info("STT 입력 대기 재개")
 
             else:
                 self.get_logger().warning("TTS request 실패")
+                time.sleep(0.2)
+                self._play_ready_beep()
                 self._accepting_speech = True
 
         except Exception as e:
             self.get_logger().error(f"TTS service call 실패: {e}")  
+            time.sleep(0.2)
+            self._play_ready_beep()
             self._accepting_speech = True
 
 

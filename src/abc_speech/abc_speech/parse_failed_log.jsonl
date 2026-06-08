@@ -48,3 +48,18 @@
 {"time": "2026-06-05 19:02:12", "raw": "시현아 포카리 하나 우유", "best_candidate": "펩시", "score": 40.0, "method": "fuzzy"}
 {"time": "2026-06-05 19:16:49", "raw": "15초 하나랑 초코파이 두 개", "best_candidate": "초코파이", "score": 36.36363636363637, "method": "jamo"}
 {"time": "2026-06-05 19:17:03", "raw": "함초 하나랑 초코파이 두 개", "best_candidate": "칸쵸", "score": 40.0, "method": "jamo"}
+{"time": "2026-06-08 13:37:59", "raw": "초코파이 하나 주", "best_candidate": "두유", "score": 33.333333333333336, "method": "jamo"}
+{"time": "2026-06-08 13:44:08", "raw": "안아 주세요", "best_candidate": "칸쵸", "score": 40.0, "method": "jamo"}
+{"time": "2026-06-08 13:53:47", "raw": "빼빼로 아몬드 세 개 주", "best_candidate": "두유", "score": 33.333333333333336, "method": "jamo"}
+{"time": "2026-06-08 14:12:36", "raw": "두 개랑 두유 하나 시켜 줘", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 14:14:13", "raw": "포카리 색이랑 칸초 하나 부탁해", "best_candidate": "펩시", "score": 40.0, "method": "jamo"}
+{"time": "2026-06-08 14:15:16", "raw": "아몬드 빼빼로 두 개랑 포카리 하나 주", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 14:15:29", "raw": "아몬드 빼빼로 두 개랑 포카리 하나", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 14:15:42", "raw": "아몬드 빼빼로 두 개랑 포카리 하나", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 14:41:57", "raw": "안초 하나 택시 하나 두유 하나 줘", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 14:42:34", "raw": "코파이 두 개 포카리 하나", "best_candidate": "칸쵸", "score": 44.44444444444444, "method": "jamo"}
+{"time": "2026-06-08 15:09:18", "raw": "아몬드 빼빼로 두 개랑 포카리", "best_candidate": "칸쵸", "score": 33.333333333333336, "method": "jamo"}
+{"time": "2026-06-08 15:10:45", "raw": "아마도 빼빼로 두 개랑 포카리 하나", "best_candidate": "빼빼로 아몬드", "score": 40.0, "method": "jamo"}
+{"time": "2026-06-08 15:26:01", "raw": "전체 다 줘", "best_candidate": "칸쵸", "score": 40.0, "method": "jamo"}
+{"time": "2026-06-08 15:26:13", "raw": "모두 줘", "best_candidate": "두유", "score": 50.0, "method": "fuzzy"}
+{"time": "2026-06-08 15:26:26", "raw": "왼쪽에 있는 과자", "best_candidate": "초코파이", "score": 25.0, "method": "jamo"}
