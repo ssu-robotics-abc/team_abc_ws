@@ -19,7 +19,7 @@ class RG():
             return
         self.gripper = gripper  # RG2/6
         if self.gripper == 'rg2':
-            self.max_width = 1100
+            self.max_width = 1200
             self.max_force = 400
         elif self.gripper == 'rg6':
             self.max_width = 1600

@@ -53,7 +53,7 @@ class PlaceItemServer(Node):
         except Exception as e:
             self.get_logger().error(f"[Place_Item] MoveItPy 초기화 실패: {e}")
             sys.exit(1)
-
+        '''
         self.joints_home = {
             "joint_1": math.radians(0.0),
             "joint_2": math.radians(-20.0),
@@ -62,6 +62,16 @@ class PlaceItemServer(Node):
             "joint_5": math.radians(15.0),
             "joint_6": math.radians(90.0),
         }
+        '''
+        self.joints_home = {
+            "joint_1": math.radians(0.0),
+            "joint_2": math.radians(0.0),
+            "joint_3": math.radians(135.0),
+            "joint_4": math.radians(0.0),
+            "joint_5": math.radians(-45.0),
+            "joint_6": math.radians(90.0),
+        }
+
         self.pos_checkout = [408.0, 153.0, 342.0, 33.0, 180.0, 100.0]
         self.pos_return = [408.0, -153.0, 342.0, 133.0, -172.0, -120.0]
         self.safe_z_offset = 100.0

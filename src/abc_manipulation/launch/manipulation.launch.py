@@ -31,6 +31,10 @@ def generate_launch_description():
         executable='pick_item',
         name='pick_item_server',
         output='screen',
+        parameters=[
+            moveit_config.to_dict(),
+            moveit_py_params
+        ],
     )
         
     # 2. Scan Barcode 서버 노드
