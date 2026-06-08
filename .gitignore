@@ -122,7 +122,6 @@ Thumbs.db
 # Environment / secrets
 # =========================
 .env
-.env.*
 *.secret
 secrets/
 credentials/
