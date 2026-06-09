@@ -133,7 +133,6 @@ api_keys.json
 tmp/
 temp/
 i.cache/
+parse_failed_log.jsonl/
 
 !src/abc_perception/models/best.pt
-
-
