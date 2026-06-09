@@ -89,7 +89,9 @@ class TtsNode(Node):
             if key.lower() == "s":
                 self.get_logger().info("'s' 입력 감지")
 
-                self.play_tts("주문을 시작해주세요. 상품명과 수량을 말씀해주세요.")
+                # self.play_tts("주문을 시작해주세요. 상품명과 수량을 말씀해주세요.")
+                self.play_tts("주문을 시작해주세요.")
+                
                 self.trigger_stt()
 
     def vlm_callback(self, request, response):
@@ -126,7 +128,7 @@ class TtsNode(Node):
 
             full_text = (
                 f"{items_text} 있어 재고가 부족합니다. "
-                f"해당 상품만 재주문 해주세요."
+                f"전체 주문을 다시 해주세요."
             )
 
             self.get_logger().info(f"[TTS 요청] {full_text}")
