@@ -6,6 +6,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -20,8 +21,22 @@ def generate_launch_description():
     host = LaunchConfiguration("host")
     port = LaunchConfiguration("port")
     color = LaunchConfiguration("color")
+    name = LaunchConfiguration("name")
+
+    dsr_moveit_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        namespace=name,
+        arguments=["dsr_moveit_controller", "-c", "controller_manager"],
+        output="screen",
+    )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "name",
+            default_value="dsr01",
+            description="Doosan robot namespace",
+        ),
         DeclareLaunchArgument(
             "mode",
             default_value="real",
@@ -56,6 +71,9 @@ def generate_launch_description():
                 "host": host,
                 "port": port,
                 "color": color,
+                "name": name,
             }.items(),
         ),
+
+        dsr_moveit_controller_spawner,
     ])

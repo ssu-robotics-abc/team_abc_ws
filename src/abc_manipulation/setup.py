@@ -8,7 +8,6 @@ package_name = 'abc_manipulation'
 
 config_files = glob('config/*')
 
-
 setup(
     name=package_name,
     version='0.0.0',
@@ -20,7 +19,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name), ['abc_manipulation/T_gripper2camera.npy']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), config_files),
+        (os.path.join('share', package_name, 'config'), ['config/.env']),
     ],
     
     package_data={

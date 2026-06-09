@@ -11,6 +11,7 @@
   <depend>rclpy</depend>
   <depend>abc_interfaces</depend>
   <depend>geometry_msgs</depend>
+  <depend>moveit_msgs</depend>
   <depend>sensor_msgs</depend> <!-- Realsense 이미지 처리에 필요 -->
   <depend>std_msgs</depend>    <!-- Header 등에 필요 -->
   

@@ -205,36 +205,34 @@ class TaskPlannerNode(Node):
                 self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
                 goal_msg_scan = ScanBarcode.Goal(
                     product_id=barcode,
-                    height=h
                     )
 
                 res2 = await self.call_action(self.scan_client, goal_msg_scan)
 
                 if res2 and res2.success:
-                    # 스캔 일치 여부 확인
                     is_match = res2.is_corrected
-
-                    # 3. PlaceItem 노드 통신 
-                    self.get_logger().info(">> Place 서버 연결 대기...")
-                    if not self.place_client.wait_for_server(timeout_sec=20):
-                        self.get_logger().error("Place 서버가 오프라인입니다.")
-                        return
-                    
-                    self.get_logger().info(">> place_item 노드 호출: 분류 이송 및 물체 놓기 명령")
-                     
-                    # Scan 결과에 따른 물품 이동
-                    goal_msg_place = PlaceItem.Goal(is_corrected=is_match)
-                     
-                    # 결과 응답 대기
-                    res3 = await self.call_action(self.place_client, goal_msg_place)
-                     
-                    if res3 and res3.success:
-                        self.get_logger().info("Place_item 성공! 물체를 지정된 장소에 놓았습니다.")
-                    else:
-                        self.get_logger().error("Place_item 실패")
-                        return
                 else:
-                    self.get_logger().error("Scan_barcode 실패")
+                    self.get_logger().warning("Scan_barcode 실패: 미검증 상품으로 처리하여 반품대로 이동합니다.")
+                    is_match = False
+
+                # 3. PlaceItem 노드 통신
+                self.get_logger().info(">> Place 서버 연결 대기...")
+                if not self.place_client.wait_for_server(timeout_sec=20):
+                    self.get_logger().error("Place 서버가 오프라인입니다.")
+                    return
+
+                self.get_logger().info(">> place_item 노드 호출: 분류 이송 및 물체 놓기 명령")
+
+                # Scan 결과에 따른 물품 이동: True는 판매대, False는 반품대
+                goal_msg_place = PlaceItem.Goal(is_corrected=is_match)
+
+                # 결과 응답 대기
+                res3 = await self.call_action(self.place_client, goal_msg_place)
+
+                if res3 and res3.success:
+                    self.get_logger().info("Place_item 성공! 물체를 지정된 장소에 놓았습니다.")
+                else:
+                    self.get_logger().error("Place_item 실패")
                     return
             else:
                 self.get_logger().error("Pick_item 실패")

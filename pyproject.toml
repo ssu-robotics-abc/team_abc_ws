@@ -1,0 +1,23 @@
+[project]
+name = "team-abc-ws"
+version = "0.1.0"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "pandas",
+    "pyyaml",
+    "requests",
+    "torch",
+    "torchvision",
+    "ultralytics",
+    "pyrealsense2",
+    "scikit-learn",
+    "scipy",
+    "matplotlib",
+    "pymodbus",
+    "pyserial",
+    "gtts",
+    "speechrecognition",
+    "pygame",
+]
