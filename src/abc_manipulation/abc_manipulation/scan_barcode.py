@@ -207,8 +207,10 @@ class ScanBarcodeServer(Node):
             result.is_corrected = False
             self.get_logger().error("바코드 스캔 실패: 바코드를 읽지 못했거나 로봇 이동이 실패했습니다.")
 
+        '''
         if not self.plan_and_execute_joints(self.joints_home_horiz):
             self.get_logger().error("홈 위치 복귀 실패")
+        '''
 
         if result.success:
             goal_handle.succeed()

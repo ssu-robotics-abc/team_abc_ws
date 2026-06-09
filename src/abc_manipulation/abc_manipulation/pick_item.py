@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Vector3
 from moveit.planning import MoveItPy, PlanRequestParameters
 from moveit_msgs.msg import Constraints, JointConstraint
 from rclpy.action import ActionServer
@@ -26,8 +26,8 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.1
-ACCELERATION_SCALE = 0.2
+VELOCITY_SCALE = 0.2
+ACCELERATION_SCALE = 0.3
 SLOW_VELOCITY_SCALE = 1.0   # 수직 하강 파지 시 저속
 
 X_OFFSET = 185.0
@@ -102,6 +102,14 @@ class PickItemServer(Node):
             self.execute_callback,
             callback_group=cb_group,
         )
+
+        self._latest_yolo_cx: float | None = None
+        self._latest_yolo_cy: float | None = None
+        self.create_subscription(
+            Vector3, "/yolo_tracking", self._yolo_tracking_cb, 10,
+            callback_group=cb_group,
+        )
+
         self.get_logger().info("🚀 pick_item 서버가 준비되었습니다. 플래너의 명령을 기다립니다.")
 
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
@@ -195,6 +203,51 @@ class PickItemServer(Node):
         )
         return True
 
+    def _yolo_tracking_cb(self, msg: Vector3):
+        self._latest_yolo_cx = msg.x
+        self._latest_yolo_cy = msg.y
+
+    def recapture_y(self, fallback_y: float) -> float:
+        """wait_x 도달 후 YOLO 최신 픽셀로 Y 재계산 (execute_callback 초기 인식과 동일 로직)."""
+        cx_px = self._latest_yolo_cx
+        cy_px = self._latest_yolo_cy
+        if cx_px is None or cy_px is None:
+            self.get_logger().warn("⚠️ YOLO 추적 픽셀 없음 → fallback Y 사용")
+            return fallback_y
+
+        depth_frame = self.img_node.get_depth_frame()
+        if depth_frame is None:
+            self.get_logger().warn("⚠️ depth frame 없음 → fallback Y 사용")
+            return fallback_y
+
+        fx = self.intrinsics["fx"]
+        fy = self.intrinsics["fy"]
+        ppx = self.intrinsics["ppx"]
+        ppy = self.intrinsics["ppy"]
+
+        h_d, w_d = depth_frame.shape
+        cx_i = int(cx_px)
+        cy_i = int(cy_px)
+        roi_r = 5
+        y0 = max(0, cy_i - roi_r); y1 = min(h_d, cy_i + roi_r + 1)
+        x0 = max(0, cx_i - roi_r); x1 = min(w_d, cx_i + roi_r + 1)
+        roi = depth_frame[y0:y1, x0:x1]
+        valid = roi[roi > 0]
+        if len(valid) == 0:
+            self.get_logger().warn("⚠️ ROI depth 유효값 없음 → fallback Y 사용")
+            return fallback_y
+
+        z_mm = float(np.median(valid))
+        current_pose = self.get_current_pose_dsr()
+        cam_coords = ((cx_i - ppx) * z_mm / fx, (cy_i - ppy) * z_mm / fy, z_mm)
+        base_xyz = self.transform_to_base(cam_coords, current_pose)
+
+        self.get_logger().info(
+            f"🎯 YOLO 재인식 Y: {fallback_y:.1f} → {base_xyz[1]:.1f} mm "
+            f"(pixel=({cx_i},{cy_i}), depth={z_mm:.0f}mm)"
+        )
+        return float(base_xyz[1])
+
     def execute_callback(self, goal_handle):
         slots = goal_handle.request.get_fields_and_field_types().keys()
         self.get_logger().info(f"🚨 [인터페이스 디버깅] PickItem_Goal 내부 실제 변수 목록: {list(slots)}")
@@ -265,6 +318,10 @@ class PickItemServer(Node):
         self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
         time.sleep(0.5)
 
+        # wait_x 도달 후 YOLO 재인식으로 Y 좌표 갱신
+        y_new = self.recapture_y(y)
+        pick_y = y_new + Y_PICK_OFFSET
+
         # Step 2: 진입 (수평 찌르기)
         feedback_msg.state = "그립 처리를 위해 물품으로 진입 중"
         goal_handle.publish_feedback(feedback_msg)
@@ -283,8 +340,8 @@ class PickItemServer(Node):
         # Step 4: 후퇴 (뒤로 빠지기)
         feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
         goal_handle.publish_feedback(feedback_msg)
-
-        self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        
+        self.plan_and_execute_pose([410, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
         time.sleep(1.0)
         self.get_logger().info("[DEBUG] retreat finished")
 
@@ -298,7 +355,7 @@ class PickItemServer(Node):
         place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) - 5.0
 
         self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
-        self.plan_and_execute_pose([wait_x, 13.76, max(place_z, 80) , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
+        self.plan_and_execute_pose([430, 13.76, max(place_z, 80) , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP", velocity_scale=0.05)
         time.sleep(0.5)
 
         # 로직 2: 그리퍼를 연다

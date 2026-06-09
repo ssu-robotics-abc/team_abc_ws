@@ -5,6 +5,7 @@ from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
+from geometry_msgs.msg import Vector3
 from abc_interfaces.srv import RequestItem, ResponseItem
 
 import cv2
@@ -65,6 +66,9 @@ class YoloNode(Node):
             10
         )
 
+        self.tracking_pub = self.create_publisher(Vector3, "/yolo_tracking", 10)
+        self.tracking_class = None
+
         self.get_logger().info(
             "YOLO Node 구동 중 "
             f"(request: {self.request_service_name}, "
@@ -117,6 +121,7 @@ class YoloNode(Node):
             )
             return response
 
+        self.tracking_class = class_name
         response.success = True
         response.message = f"'{class_name}' 위치 응답 전송 완료"
         self.get_logger().info(response.message)
@@ -134,6 +139,15 @@ class YoloNode(Node):
 
         self.latest_frame = frame
         self.latest_header = msg.header
+
+        if self.tracking_class is not None:
+            det = self.detect_requested_item(self.tracking_class)
+            if det is not None:
+                tracking_msg = Vector3()
+                tracking_msg.x = det["center_x"]
+                tracking_msg.y = det["center_y"]
+                tracking_msg.z = det["confidence"]
+                self.tracking_pub.publish(tracking_msg)
 
         if self.debug_view:
             results = self.model(frame, conf=0.5, verbose=False)

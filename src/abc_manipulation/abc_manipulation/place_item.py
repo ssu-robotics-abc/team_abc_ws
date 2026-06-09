@@ -207,7 +207,7 @@ class PlaceItemServer(Node):
 
         feedback_msg.state = "물체 내려놓는 중..."
         goal_handle.publish_feedback(feedback_msg)
-        if not self.plan_and_execute_pose(target_pose, planner_id="LIN"):
+        if not self.plan_and_execute_pose(target_pose, planner_id="PTP"):
             return self.abort(goal_handle, "[Place_Item] 내려놓기 위치 이동 실패")
         time.sleep(0.5)
 
@@ -217,7 +217,7 @@ class PlaceItemServer(Node):
 
         feedback_msg.state = "작업 완료 후 홈 복귀 중..."
         goal_handle.publish_feedback(feedback_msg)
-        if not self.plan_and_execute_pose(approach_target, planner_id="LIN"):
+        if not self.plan_and_execute_pose(approach_target, planner_id="PTP"):
             return self.abort(goal_handle, "[Place_Item] 후퇴 이동 실패")
         if not self.plan_and_execute_joints(self.joints_home):
             return self.abort(goal_handle, "[Place_Item] 홈 위치 복귀 실패")
