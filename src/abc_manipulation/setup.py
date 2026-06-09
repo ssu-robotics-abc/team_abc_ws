@@ -1,10 +1,12 @@
 # abc_manipulation/setup.py
 
-from setuptools import find_packages, setup
 import os
 from glob import glob
+from setuptools import find_packages, setup
 
 package_name = 'abc_manipulation'
+
+config_files = glob('config/*')
 
 setup(
     name=package_name,
@@ -17,7 +19,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name), ['abc_manipulation/T_gripper2camera.npy']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config'), ['config/ .env']),
     ],
     
     package_data={

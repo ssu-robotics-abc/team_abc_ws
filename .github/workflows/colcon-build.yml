@@ -63,6 +63,11 @@ jobs:
             -r \
             --skip-keys "dsr_msgs2 moveit_py"
 
+      - name: Create abc_manipulation .env
+        run: |
+          mkdir -p src/abc_manipulation/config
+          touch src/abc_manipulation/config/.env
+
       - name: Build workspace
         run: |
           set -exo pipefail
