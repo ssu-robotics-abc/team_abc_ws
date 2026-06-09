@@ -18,7 +18,7 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 
 from abc_interfaces.action import PickItem
-from abc_manipulation.onrobot import RG
+from abc_manipulation.onrobot import RG, close_until_grip_detected
 from abc_manipulation.realsense import ImgNode
 
 GROUP_NAME = "manipulator"
@@ -34,6 +34,7 @@ X_OFFSET = 185.0
 SIDE_APPROACH_DIST = 180.0
 SQUEEZE_RATIO = 0.95
 REAL_TABLE_Z = 5.0
+Y_PICK_OFFSET = 5.0   # 수평 파지 Y 보정 (오른쪽으로 치우치면 음수, 왼쪽이면 양수)
 
 # pos_home_horiz = [431.39, 13.76, 112.90, 178.23, -90.00, -86.81] 에서 추출한 수평 자세 오리엔테이션
 HORIZ_RX = 178.23
@@ -260,7 +261,8 @@ class PickItemServer(Node):
 
         wait_x = x - (X_OFFSET + SIDE_APPROACH_DIST)
         grip_z = z + 30.0  # 중심보다 30mm 위를 파지
-        self.plan_and_execute_pose([wait_x, y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
+        pick_y = y + Y_PICK_OFFSET
+        self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
         time.sleep(0.5)
 
         # Step 2: 진입 (수평 찌르기)
@@ -268,21 +270,21 @@ class PickItemServer(Node):
         goal_handle.publish_feedback(feedback_msg)
 
         pick_x = x - X_OFFSET
-        self.plan_and_execute_pose([pick_x, y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        self.plan_and_execute_pose([pick_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
 
         # Step 3: 파지
         feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
         goal_handle.publish_feedback(feedback_msg)
         self.get_logger().info(f"[DEBUG] target_width={target_width} ({target_width/10:.1f}mm)")
-        self.gripper.move_gripper(width_val=target_width)
+        close_until_grip_detected(self.gripper, force_val=20, timeout=30.0)
         time.sleep(1.2)
-        self.get_logger().info(f"wait_x={wait_x}, pick_x={pick_x}")
+        self.get_logger().info(f"wait_x={wait_x}, pick_x={pick_x}, pick_y={pick_y}")
 
         # Step 4: 후퇴 (뒤로 빠지기)
         feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
         goal_handle.publish_feedback(feedback_msg)
 
-        self.plan_and_execute_pose([wait_x, y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
         time.sleep(1.0)
         self.get_logger().info("[DEBUG] retreat finished")
 
@@ -293,10 +295,10 @@ class PickItemServer(Node):
 
         fy = self.intrinsics["fy"]
         obj_height_mm = (target_height * z_dist) / fy
-        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) -5.0
+        place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) - 5.0
 
         self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
-        self.plan_and_execute_pose([wait_x, 13.76, place_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
+        self.plan_and_execute_pose([wait_x, 13.76, max(place_z, 80) , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
         time.sleep(0.5)
 
         # 로직 2: 그리퍼를 연다
@@ -425,13 +427,13 @@ class PickItemServer(Node):
         )
 
         self.plan_and_execute_pose(
-            [target_x, target_y, grip_z, vert_rx, vert_ry, vert_rz],
+            [target_x, target_y, grip_z - 10, vert_rx, vert_ry, vert_rz],
             "LIN",
             velocity_scale=SLOW_VELOCITY_SCALE,
         )
         time.sleep(0.3)
 
-        self.gripper.move_gripper(width_val=target_width)
+        close_until_grip_detected(self.gripper, force_val=20, timeout=30.0)
         time.sleep(1.2)
 
         # 로직 7: 들어올리기
