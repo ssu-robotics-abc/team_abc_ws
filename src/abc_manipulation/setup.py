@@ -6,7 +6,10 @@ from setuptools import find_packages, setup
 
 package_name = 'abc_manipulation'
 
-config_files = glob('config/*')
+config_files = [
+    'config/.env',
+    'config/moveit_py.yaml',
+]
 
 setup(
     name=package_name,
@@ -19,7 +22,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name), ['abc_manipulation/T_gripper2camera.npy']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), ['config/.env']),
+        (os.path.join('share', package_name, 'config'), config_files),
     ],
     
     package_data={
