@@ -21,8 +21,8 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.15
-ACCELERATION_SCALE = 0.1
+VELOCITY_SCALE = 0.3
+ACCELERATION_SCALE = 0.3
 SAFE_X_MIN = 0.0
 SAFE_Y_MIN = -300.0
 SAFE_Y_MAX = 300.0
@@ -149,7 +149,7 @@ class PlaceItemServer(Node):
         req_params.planning_time = 2.0
         return req_params
 
-    def plan_and_execute_pose(self, dsr_pose, planner_id="PTP"):
+    def plan_and_execute_pose(self, dsr_pose, planner_id="LIN"):
         try:
             pose_stamped = self.to_pose_stamped(self.clamp_to_safe_workspace(dsr_pose))
             self.arm.set_start_state_to_current_state()
@@ -201,23 +201,23 @@ class PlaceItemServer(Node):
 
         feedback_msg.state = f"{dest_name} 상단으로 접근 중..."
         goal_handle.publish_feedback(feedback_msg)
-        if not self.plan_and_execute_pose(approach_target, planner_id="PTP"):
+        if not self.plan_and_execute_pose(approach_target, planner_id="LIN"):
             return self.abort(goal_handle, "[Place_Item] 목적지 상단 이동 실패")
-        time.sleep(0.2)
+        time.sleep(0.5)
 
         feedback_msg.state = "물체 내려놓는 중..."
         goal_handle.publish_feedback(feedback_msg)
-        if not self.plan_and_execute_pose(target_pose, planner_id="PTP"):
+        if not self.plan_and_execute_pose(target_pose, planner_id="LIN"):
             return self.abort(goal_handle, "[Place_Item] 내려놓기 위치 이동 실패")
         time.sleep(0.5)
 
         if self.gripper is not None:
             self.gripper.open_gripper()
-        time.sleep(1.0)
+        time.sleep(0.5)
 
         feedback_msg.state = "작업 완료 후 홈 복귀 중..."
         goal_handle.publish_feedback(feedback_msg)
-        if not self.plan_and_execute_pose(approach_target, planner_id="PTP"):
+        if not self.plan_and_execute_pose(approach_target, planner_id="LIN"):
             return self.abort(goal_handle, "[Place_Item] 후퇴 이동 실패")
         if not self.plan_and_execute_joints(self.joints_home):
             return self.abort(goal_handle, "[Place_Item] 홈 위치 복귀 실패")

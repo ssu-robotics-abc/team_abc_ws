@@ -26,7 +26,7 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.2
+VELOCITY_SCALE = 0.3
 ACCELERATION_SCALE = 0.3
 SLOW_VELOCITY_SCALE = 1.0   # 수직 하강 파지 시 저속
 
@@ -327,42 +327,42 @@ class PickItemServer(Node):
         goal_handle.publish_feedback(feedback_msg)
 
         pick_x = x - X_OFFSET
-        self.plan_and_execute_pose([pick_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        self.plan_and_execute_pose([pick_x +10 , pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
 
         # Step 3: 파지
         feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
         goal_handle.publish_feedback(feedback_msg)
         self.get_logger().info(f"[DEBUG] target_width={target_width} ({target_width/10:.1f}mm)")
-        close_until_grip_detected(self.gripper, force_val=20, timeout=30.0)
-        time.sleep(1.2)
+        close_until_grip_detected(self.gripper, force_val=30, timeout=30.0)
+        time.sleep(0.5)
         self.get_logger().info(f"wait_x={wait_x}, pick_x={pick_x}, pick_y={pick_y}")
 
         # Step 4: 후퇴 (뒤로 빠지기)
         feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
         goal_handle.publish_feedback(feedback_msg)
         
-        self.plan_and_execute_pose([410, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
-        time.sleep(1.0)
+        self.plan_and_execute_pose([430, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
+        time.sleep(0.5)
         self.get_logger().info("[DEBUG] retreat finished")
 
         # 로직 1: 수평으로 잡은 물품을 바닥에 사뿐히 내려놓는다
         feedback_msg.state = "후퇴 위치에서 내려놓는 중..."
         goal_handle.publish_feedback(feedback_msg)
-        time.sleep(1.0)
+        time.sleep(0.5)
 
         fy = self.intrinsics["fy"]
         obj_height_mm = (target_height * z_dist) / fy
         place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) - 5.0
 
         self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
-        self.plan_and_execute_pose([430, 13.76, max(place_z, 80) , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP", velocity_scale=0.05)
+        self.plan_and_execute_pose([430, 13.76, max(place_z, 80) , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
         time.sleep(0.5)
 
         # 로직 2: 그리퍼를 연다
         feedback_msg.state = "그리퍼 개방 중..."
         goal_handle.publish_feedback(feedback_msg)
         self.gripper.open_gripper()
-        time.sleep(1.0)
+        time.sleep(0.5)
 
         # 로직 3: 수직 관측 자세로 전환
         feedback_msg.state = "수직 관측 자세로 전환 중..."
@@ -376,7 +376,7 @@ class PickItemServer(Node):
 
         feedback_msg.state = "수직 관측 자세 도달"
         goal_handle.publish_feedback(feedback_msg)
-        time.sleep(1.0)
+        time.sleep(0.5)
 
         # 로직 4: Depth 기반 캔(또는 재배치 물품) 위치 측정
         feedback_msg.state = "Depth 기반 물체 검출 중..."
@@ -484,14 +484,14 @@ class PickItemServer(Node):
         )
 
         self.plan_and_execute_pose(
-            [target_x, target_y, grip_z - 10, vert_rx, vert_ry, vert_rz],
+            [target_x, target_y, grip_z - 15, vert_rx, vert_ry, vert_rz],
             "LIN",
             velocity_scale=SLOW_VELOCITY_SCALE,
         )
-        time.sleep(0.3)
+        time.sleep(0.5)
 
-        close_until_grip_detected(self.gripper, force_val=20, timeout=30.0)
-        time.sleep(1.2)
+        close_until_grip_detected(self.gripper, force_val=30, timeout=30.0)
+        time.sleep(0.5)
 
         # 로직 7: 들어올리기
         feedback_msg.state = "수직 피킹 완료 후 들어올리는 중..."
@@ -514,7 +514,7 @@ def main(args=None):
 
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
-    time.sleep(1.0)
+    time.sleep(0.5)
 
     server.get_logger().info("로봇 초기 위치(JReady) 설정 중")
     server.plan_and_execute_joints(server.joints_jready)

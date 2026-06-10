@@ -95,7 +95,7 @@ class ScanBarcodeServer(Node):
             constraints.joint_constraints.append(joint_constraint)
         return [constraints]
 
-    def plan_and_execute_joints(self, joint_goal, v_scale=None, a_scale=None):
+    def plan_and_execute_joints(self, joint_goal, planner_id=None, v_scale=None, a_scale=None):
         """MoveIt 2를 이용해 목표 Joint 상태로 궤적을 계획하고 실행하는 공용 헬퍼 함수"""
         if not (JOINT_6_MIN <= joint_goal["joint_6"] <= JOINT_6_MAX):
             self.get_logger().error(
@@ -103,11 +103,18 @@ class ScanBarcodeServer(Node):
             )
             return False
 
+        if planner_id is not None and planner_id not in ("PTP", "LIN"):
+            self.get_logger().error(f"지원하지 않는 planner_id입니다: {planner_id}")
+            return False
+
         try:
             self.arm.set_start_state_to_current_state()
             self.arm.set_goal_state(motion_plan_constraints=self.build_joint_constraints(joint_goal))
 
             req_params = PlanRequestParameters(self.robot)
+            if planner_id is not None:
+                req_params.planning_pipeline = "pilz_industrial_motion_planner"
+                req_params.planner_id = planner_id
             if v_scale is not None:
                 req_params.max_velocity_scaling_factor = v_scale
             if a_scale is not None:
@@ -149,22 +156,22 @@ class ScanBarcodeServer(Node):
 
             scan_goal_joints["joint_6"] = target_j6
 
-            if not self.plan_and_execute_joints(scan_goal_joints, v_scale=0.15, a_scale=0.2):
+            if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
                 self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
                 return False
             last_target_j6 = target_j6
-            time.sleep(0.02)
+            time.sleep(0.1)
 
         return self.is_scanned
 
     def _make_joint_6_scan_positions(self, start_j6, step):
         # 한 방향으로 360° 한 바퀴 회전
         positions = []
-        end_j6 = start_j6 - math.radians(360.0)
-        current = start_j6 - step
-        while current > end_j6:
+        end_j6 = min(start_j6 + math.radians(360.0), JOINT_6_MAX)
+        current = start_j6 + step
+        while current < end_j6:
             positions.append(current)
-            current -= step
+            current += step
         positions.append(end_j6)
         return positions
 
@@ -179,7 +186,7 @@ class ScanBarcodeServer(Node):
         feedback_msg.state = "스캐너 앞으로 이동 중..."
         goal_handle.publish_feedback(feedback_msg)
         
-        if not self.plan_and_execute_joints(self.joints_scanner):
+        if not self.plan_and_execute_joints(self.joints_scanner, planner_id="PTP"):
             self.get_logger().error("⚠️ 스캐너 위치 이동 계획 실패!")
             goal_handle.abort()
             return ScanBarcode.Result(success=False, is_corrected=False)
@@ -208,7 +215,7 @@ class ScanBarcodeServer(Node):
             self.get_logger().error("바코드 스캔 실패: 바코드를 읽지 못했거나 로봇 이동이 실패했습니다.")
 
         '''
-        if not self.plan_and_execute_joints(self.joints_home_horiz):
+        if not self.plan_and_execute_joints(self.joints_home_horiz, planner_id="PTP"):
             self.get_logger().error("홈 위치 복귀 실패")
         '''
 
