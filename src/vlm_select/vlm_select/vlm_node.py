@@ -293,16 +293,19 @@ class VlmLogicNode(Node):
 
             stock_info = fetch_stock_from_db(c_name)
 
-            if stock_info is None:
-                # DB 조회 자체 실패 → 재고 0으로 간주
-                self.get_logger().error(f"  [{c_name}] DB 조회 실패 → 재고 0으로 처리")
+            if stock_info["status"] != "ok":
+                # DB 조회 실패(통신 오류/미등록) → 재고 0으로 간주
+                self.get_logger().error(
+                    f"  [{c_name}] DB 조회 실패({stock_info['status']}) → 재고 0으로 처리"
+                )
                 insufficient_class_names.append(c_name)
                 insufficient_stocks.append(0)
                 continue
 
-            remaining = stock_info.get("remaining_stock", 0)
-            barcode   = stock_info.get("barcode_data", "")
-            db_results[c_name] = stock_info
+            data      = stock_info["data"]
+            remaining = data.get("remaining_stock", 0)
+            barcode   = data.get("barcode_data", "")
+            db_results[c_name] = data
 
             self.get_logger().info(
                 f"  [{c_name}] 요구: {requested}개 / 재고: {remaining}개 / 바코드: {barcode}"
