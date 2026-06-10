@@ -132,23 +132,54 @@ def get_target_from_gemini(cv_image, user_command):
 # ============================================================
 # DB API: 단일 상품 재고 조회
 # ============================================================
-def fetch_stock_from_db(class_name: str) -> dict | None:
+def fetch_stock_from_db(class_name: str) -> dict:
     """
     DB REST API에서 class_name에 해당하는 재고 정보를 조회한다.
-    성공 시 {"product_name": ..., "remaining_stock": ..., "barcode_data": ...} 반환.
-    실패 시 None 반환.
+
+    호출 대상 URL을 로그로 함께 출력하며, 반환값(dict)은 항상 "status" 키를 포함한다.
+      - {"status": "ok",        "data": {...}}   : 정상 조회 (data 안에 remaining_stock, barcode_data 등)
+      - {"status": "not_found", "detail": str}   : 상품이 DB에 등록되지 않음 (HTTP 404)
+      - {"status": "error",     "detail": str}   : DB 통신/HTTP/파싱 오류 (API 호출 실패)
     """
+    # 어떤 주소에서 받아오는지 명시적으로 로그에 남긴다.
     url = DB_BASE_URL + DB_STOCK_ENDPOINT.format(class_name=class_name)
+    print(f"[DB 요청] {class_name} → GET {url}")
+
+    # ── API 호출 실패: 연결/타임아웃 등 통신 예외 처리 ──────────────
     try:
         resp = requests.get(url, timeout=5.0)
-        if resp.status_code == 200:
-            return resp.json()
-        else:
-            print(f"[DB 오류] {class_name} 조회 실패 (HTTP {resp.status_code}): {resp.text}")
-            return None
+    except requests.exceptions.Timeout:
+        detail = f"DB 응답 시간 초과(timeout) - {url}"
+        print(f"[DB 통신 오류] {class_name}: {detail}")
+        return {"status": "error", "detail": detail}
+    except requests.exceptions.ConnectionError:
+        detail = f"DB 서버에 연결할 수 없습니다(connection error) - {url}"
+        print(f"[DB 통신 오류] {class_name}: {detail}")
+        return {"status": "error", "detail": detail}
     except requests.exceptions.RequestException as e:
-        print(f"[DB 통신 오류] {class_name} 조회 중 예외 발생: {e}")
-        return None
+        detail = f"DB 요청 중 예외 발생: {e} - {url}"
+        print(f"[DB 통신 오류] {class_name}: {detail}")
+        return {"status": "error", "detail": detail}
+
+    # ── 정상 응답: JSON 파싱 실패까지 방어 ─────────────────────────
+    if resp.status_code == 200:
+        try:
+            return {"status": "ok", "data": resp.json()}
+        except ValueError as e:
+            detail = f"DB 응답 JSON 파싱 실패: {e} / 원문: {resp.text}"
+            print(f"[DB 오류] {class_name}: {detail}")
+            return {"status": "error", "detail": detail}
+
+    # ── 상품 미등록(404)은 통신 실패와 구분한다 ────────────────────
+    if resp.status_code == 404:
+        detail = f"DB에 등록되지 않은 상품(HTTP 404) - {url}"
+        print(f"[DB 오류] {class_name}: {detail}")
+        return {"status": "not_found", "detail": detail}
+
+    # ── 그 외 HTTP 오류는 API 호출 실패로 처리 ─────────────────────
+    detail = f"DB 조회 실패 (HTTP {resp.status_code}): {resp.text}"
+    print(f"[DB 오류] {class_name}: {detail}")
+    return {"status": "error", "detail": detail}
 
 
 # ============================================================
