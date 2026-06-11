@@ -76,12 +76,36 @@ class ScanBarcodeServer(Node):
             String, 'scan_done', self.scan_callback, 10, callback_group=cb_group
         )
         self.is_scanned = False
+        self.has_scan_result = False
         self.received_product_id = None
+        self.expected_product_id = None
         print("[디버그] 7. ScanBarcodeServer 모든 초기화 완료.")
 
     def scan_callback(self, msg):
-        self.received_product_id = msg.data
-        self.is_scanned = True
+        scanned_product_id = msg.data
+        self.has_scan_result = True
+
+        if self.expected_product_id is None:
+            self.received_product_id = scanned_product_id
+            self.get_logger().info(f"바코드 수신: {scanned_product_id}")
+            return
+
+        if scanned_product_id == self.expected_product_id:
+            self.received_product_id = scanned_product_id
+            self.is_scanned = True
+            self.get_logger().info(f"바코드 일치 수신: {scanned_product_id}")
+            return
+
+        if self.is_scanned:
+            self.get_logger().warning(
+                f"바코드 불일치 수신 무시: 요청={self.expected_product_id}, 수신={scanned_product_id}"
+            )
+            return
+
+        self.received_product_id = scanned_product_id
+        self.get_logger().warning(
+            f"바코드 불일치 수신: 요청={self.expected_product_id}, 수신={scanned_product_id}"
+        )
 
     def build_joint_constraints(self, joint_goal):
         constraints = Constraints()
@@ -144,28 +168,29 @@ class ScanBarcodeServer(Node):
         target_positions = self._make_joint_6_scan_positions(start_j6, step_rotation)
 
         last_target_j6 = None
-        for target_j6 in target_positions:
-            if self.is_scanned:
-                return True
-            if (time.time() - start_wait_time) > timeout_duration:
-                self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
-                return False
+        while (time.time() - start_wait_time) <= timeout_duration:
+            for target_j6 in target_positions:
+                if self.is_scanned:
+                    return True
+                if (time.time() - start_wait_time) > timeout_duration:
+                    self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
+                    return self.has_scan_result
 
-            if last_target_j6 is not None and abs(target_j6 - last_target_j6) < 1e-6:
-                continue
+                if last_target_j6 is not None and abs(target_j6 - last_target_j6) < 1e-6:
+                    continue
 
-            scan_goal_joints["joint_6"] = target_j6
+                scan_goal_joints["joint_6"] = target_j6
 
-            if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
-                self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
-                return False
-            last_target_j6 = target_j6
-            time.sleep(0.1)
+                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
+                    self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
+                    return False
+                last_target_j6 = target_j6
+                time.sleep(0.1)
 
-        return self.is_scanned
+        self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
+        return self.has_scan_result
 
     def _make_joint_6_scan_positions(self, start_j6, step):
-        # 한 방향으로 360° 한 바퀴 회전
         positions = []
         end_j6 = min(start_j6 + math.radians(360.0), JOINT_6_MAX)
         current = start_j6 + step
@@ -173,13 +198,16 @@ class ScanBarcodeServer(Node):
             positions.append(current)
             current += step
         positions.append(end_j6)
+        positions.extend(reversed(positions[:-1]))
         return positions
 
     def execute_callback(self, goal_handle):
         # 기존 로직과 동일
         self.is_scanned = False
+        self.has_scan_result = False
         self.received_product_id = None
         product_id_str = goal_handle.request.product_id
+        self.expected_product_id = product_id_str
         feedback_msg = ScanBarcode.Feedback()
         
         self.get_logger().info("제품 스캔 시퀀스 시작 (MoveIt 2).")
@@ -202,7 +230,7 @@ class ScanBarcodeServer(Node):
         result = ScanBarcode.Result()
         if success_scan:
             result.success = True
-            result.is_corrected = self.received_product_id == product_id_str
+            result.is_corrected = self.is_scanned
             if result.is_corrected:
                 self.get_logger().info("바코드 검증 성공: 상품 ID가 일치합니다.")
             else:
