@@ -6,8 +6,10 @@ from setuptools import find_packages, setup
 
 package_name = 'abc_manipulation'
 
-config_files = glob('config/*')
-
+config_files = [
+    'config/.env',
+    'config/moveit_py.yaml',
+]
 
 setup(
     name=package_name,

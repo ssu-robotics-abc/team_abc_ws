@@ -3,9 +3,21 @@ name: ROS 2 colcon build
 on:
   push:
     branches: [ main ]
+    paths:
+      - "src/**"
+      - ".github/workflows/colcon-build.yml"
+      - ".github/docker/**"
   pull_request:
     branches: [ main ]
+    paths:
+      - "src/**"
+      - ".github/workflows/colcon-build.yml"
+      - ".github/docker/**"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -17,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/ssu-robotics-abc/team_abc_ws-ros-ci:humble-v1
+      image: ghcr.io/ssu-robotics-abc/team_abc_ws-ros-ci:humble-v2
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -33,10 +45,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Clean previous colcon artifacts
-        run: |
-          rm -rf build install log
-
       - name: Update rosdep
         run: |
           set -exo pipefail
@@ -49,19 +57,22 @@ jobs:
 
           rosdep update
 
-      - name: Resolve package dependencies
+      - name: Check package dependencies
         run: |
           set -exo pipefail
 
           source /opt/ros/${ROS_DISTRO}/setup.bash
 
-          rosdep install \
+          rosdep check \
             --from-paths src \
             --ignore-src \
             --rosdistro ${ROS_DISTRO} \
-            -y \
-            -r \
             --skip-keys "dsr_msgs2 moveit_py"
+
+      - name: Create abc_manipulation .env
+        run: |
+          mkdir -p src/abc_manipulation/config
+          touch src/abc_manipulation/config/.env
 
       - name: Build workspace
         run: |

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pymodbus.client.sync import ModbusTcpClient as ModbusClient
+import time
 
 
 class RG():
@@ -19,7 +20,7 @@ class RG():
             return
         self.gripper = gripper  # RG2/6
         if self.gripper == 'rg2':
-            self.max_width = 1100
+            self.max_width = 1200
             self.max_force = 400
         elif self.gripper == 'rg6':
             self.max_width = 1600
@@ -182,3 +183,61 @@ class RG():
         print("Start moving gripper.")
         result = self.client.write_registers(
             address=0, values=params, unit=65)
+        
+def stop_gripper(gripper: RG):
+    """
+    현재 동작 중인 그리퍼를 정지시킨다.
+    control register address=2 에 stop command=8 전송
+    """
+    print("Stop gripper.")
+    result = gripper.client.write_register(
+        address=2,
+        value=8,
+        unit=65
+    )
+
+    if result is None or result.isError():
+        raise RuntimeError("Failed to stop gripper.")
+
+
+def close_until_grip_detected(
+    gripper: RG,
+    force_val=100,
+    timeout=5.0,
+    poll_interval=0.05,
+    ):
+    """
+    그리퍼를 닫다가 grip detected가 뜨면 정지한다.
+
+    Returns:
+        True  -> grip detected 후 정지
+        False -> grip detected 없이 동작 종료 또는 timeout
+    """
+
+    print("Start closing gripper until grip detected.")
+
+    # 닫기 시작
+    gripper.close_gripper(force_val)
+
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        status_list = gripper.get_status()
+
+        busy = status_list[0]
+        grip_detected = status_list[1]
+
+        if grip_detected:
+            print("Grip detected.")
+            stop_gripper(gripper)
+            return True
+
+        if not busy:
+            print("Gripper motion finished, but grip was not detected.")
+            return False
+
+        time.sleep(poll_interval)
+
+    print("Timeout. Stop gripper.")
+    stop_gripper(gripper)
+    return False

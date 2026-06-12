@@ -1,0 +1,22 @@
+class_mapping:
+  0:
+    barcode: "8801062518210"
+    name: "Kancho"
+  1:
+    barcode: "8801117536411"
+    name: "chocopie"
+  2:
+    barcode: "8801062012725"
+    name: "pepero_almond"
+  3:
+    barcode: "unknown"
+    name: "pepero_original"
+  4:
+    barcode: "8801056248703"
+    name: "pepsi"
+  5:
+    barcode: "8801097150010"
+    name: "pocari_sweat"
+  6:
+    barcode: "8801121768440"
+    name: "soy_milk"

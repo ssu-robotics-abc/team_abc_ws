@@ -1,10 +1,12 @@
 import os
+import yaml
 import rclpy
 from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
+from geometry_msgs.msg import Vector3
 from abc_interfaces.srv import RequestItem, ResponseItem
 
 import cv2
@@ -25,16 +27,32 @@ class YoloNode(Node):
         package_share_dir = get_package_share_directory("abc_perception")
         model_path = os.path.join(package_share_dir, "models", "best.pt")
         self.model = YOLO(model_path)
-        self.class_name_map = {
-            0: "8801062518210", #Kancho
-            1: "8801117536411", #chocopie
-            2: "8801062012725", #pepero_almond
-            3: "unknown",       #pepero_original
-            4: "8801056248703", #pepsi
-            5: "8801097150010", #pocari_sweat
-            6: "8801121768440", #soy_milk
-        }
-        self.class_name= {"Kancho", "chocopie", "pepero_almond", "pepero_original", "pepsi", "pocari_sweat", "soy_milk"}
+        
+        config_path = os.path.join(package_share_dir, "config", "class_mapping.yaml")
+        
+        self.class_name_map = {}       
+        self.class_display_names = {}
+        self.class_name = set()
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+            
+            mapping_data = config_data.get("class_mapping", {})
+            
+            for cls_id_str, info in mapping_data.items():
+                cls_id = int(cls_id_str)
+                barcode = str(info.get("barcode", "unknown"))
+                product_name = str(info.get("name", "unknown"))
+                
+                self.class_name_map[cls_id] = barcode
+                self.class_display_names[cls_id] = product_name
+                self.class_name.add(product_name)
+
+            self.get_logger().info("클래스 매핑 설정 파일 로드 완료")
+        
+        except Exception as e:
+            self.get_logger().error(f"설정 파일 로드 실패:{e}")
 
         self.request_service_name = (
             self.declare_parameter("request_service_name", "/request_item")
@@ -64,6 +82,9 @@ class YoloNode(Node):
             self.image_callback,
             10
         )
+
+        self.tracking_pub = self.create_publisher(Vector3, "/yolo_tracking", 10)
+        self.tracking_class = None
 
         self.get_logger().info(
             "YOLO Node 구동 중 "
@@ -117,6 +138,7 @@ class YoloNode(Node):
             )
             return response
 
+        self.tracking_class = class_name
         response.success = True
         response.message = f"'{class_name}' 위치 응답 전송 완료"
         self.get_logger().info(response.message)
@@ -134,6 +156,15 @@ class YoloNode(Node):
 
         self.latest_frame = frame
         self.latest_header = msg.header
+
+        if self.tracking_class is not None:
+            det = self.detect_requested_item(self.tracking_class)
+            if det is not None:
+                tracking_msg = Vector3()
+                tracking_msg.x = det["center_x"]
+                tracking_msg.y = det["center_y"]
+                tracking_msg.z = det["confidence"]
+                self.tracking_pub.publish(tracking_msg)
 
         if self.debug_view:
             results = self.model(frame, conf=0.5, verbose=False)
@@ -219,11 +250,14 @@ class YoloNode(Node):
 
         for box in result.boxes:
             cls_id = int(box.cls[0])
-            class_name = str(self.get_class_name(cls_id))
+            
+            barcode = str(self.get_class_name(cls_id)) # 바코드
+            display_name = self.class_display_names.get(cls_id, barcode) # 상품명
             confidence = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            
+            label = f"{display_name} ({barcode}) {confidence:.2f}"
 
-            label = f"{class_name} {confidence:.2f}"
             color = (0, 255, 0)
 
             cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)

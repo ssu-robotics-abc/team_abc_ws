@@ -30,4 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-builtin-interfaces \
     ros-humble-cv-bridge \
     ros-humble-vision-msgs \
-  && rm -rf /var/lib/apt/lists/*
+    ros-humble-xacro \
+    ros-humble-joint-state-publisher \
+    ros-humble-moveit-msgs \
+    && rm -rf /var/lib/apt/lists/*
