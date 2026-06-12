@@ -62,7 +62,7 @@ class TaskPlannerNode(Node):
         self.request_queue = []
         self.detection_queue = []
         self.pending_item_name = None
-        self.pending_order_uuid = None
+        self.pending_item_uuid = None
         self.waiting_yolo_response = False
         self.create_timer(1.0, self.run_sequence, callback_group=self.cb_group)
 
@@ -88,19 +88,18 @@ class TaskPlannerNode(Node):
             return False
 
     #주문 후 상품 리스트 전송
-    def send_cart_list(self, order_uuid: str, raw_items: list):
+    def send_cart_list(self, items_data: list):
         payload = []
-        for item in raw_items:
+        for item_name, item_uuid in items_data:
             payload.append({
-                "uuid": order_uuid,
-                "id": item["id"],
-                "amount": item["amount"]
+                "uuid": item_uuid,
+                "id": item_name
             })
         self.send_web_request("/api/v1/cart", payload, method='POST')
 
-    def send_item_status(self, order_uuid: str, is_match: bool):
+    def send_item_status(self, item_uuid: str, is_match: bool):
         payload = {
-            "uuid": order_uuid,
+            "uuid": item_uuid,
             "correct": is_match
         }
         self.send_web_request("/api/v1/cart", payload, method='PATCH')
@@ -121,10 +120,8 @@ class TaskPlannerNode(Node):
             self.get_logger().error(response.message)
             return response
 
-        #uuid 생성
-        order_uuid = str(uuid.uuid4())
         added_items = []
-        raw_items_payload = []
+        items_to_send = []
 
         for class_name, count in zip(request.class_name, request.iteration):
             item_name = str(class_name).strip()
@@ -138,13 +135,13 @@ class TaskPlannerNode(Node):
                 self.get_logger().error(response.message)
                 return response
 
-            raw_items_payload.append({
-                "id": item_name,
-                "amount": item_count
-            })
-
             for _ in range(item_count):
-                self.request_queue.append((item_name, order_uuid))
+                item_uuid = str(uuid.uuid4())
+
+                self.request_queue.append((item_name, item_uuid))
+
+                items_to_send.append((item_name, item_uuid))
+                
                 added_items.append(item_name)
 
         if not added_items:
@@ -153,7 +150,7 @@ class TaskPlannerNode(Node):
             self.get_logger().error(response.message)
             return response
 
-        self.send_cart_list(order_uuid, raw_items_payload)
+        self.send_cart_list(items_to_send)
 
         response.success = True
         response.message = f"상품 요청 {len(added_items)}개 접수"
@@ -179,9 +176,9 @@ class TaskPlannerNode(Node):
             self.get_logger().warn(response.message)
             return response
 
-        self.detection_queue.append((request, self.pending_order_uuid))
+        self.detection_queue.append((request, self.pending_item_uuid))
         self.pending_item_name = None
-        self.pending_order_uuid = None
+        self.pending_item_uuid = None
         self.waiting_yolo_response = False
 
         response.success = True
@@ -202,7 +199,7 @@ class TaskPlannerNode(Node):
         # 상품 목록에서 pop
         item_data = self.detection_queue.pop(0)
         item = item_data[0]
-        order_uuid = item_data[1]
+        item_uuid = item_data[1]
         barcode = str(item.class_name).strip()
         is_match = False
 
@@ -274,7 +271,7 @@ class TaskPlannerNode(Node):
 
             self.get_logger().info("==== 상품 처리 완료 ====")
         finally:
-            self.send_item_status(order_uuid, is_match)
+            self.send_item_status(item_uuid, is_match)
             self.is_running = False
 
     def request_next_item_location(self):
@@ -283,7 +280,7 @@ class TaskPlannerNode(Node):
 
         item_data = self.request_queue.pop(0)
         item_name = item_data[0]
-        order_uuid = item_data[1]
+        item_uuid = item_data[1]
 
         self.get_logger().info(f">> YOLO 위치 요청: {item_name}")
 
@@ -293,7 +290,7 @@ class TaskPlannerNode(Node):
             return
 
         self.pending_item_name = item_name
-        self.pending_order_uuid = order_uuid
+        self.pending_item_uuid = item_uuid
         self.waiting_yolo_response = True
 
         req = RequestItem.Request()
@@ -308,7 +305,7 @@ class TaskPlannerNode(Node):
             if not yolo_result.success:
                 self.get_logger().error(f"YOLO 요청 실패: {yolo_result.message}")
                 self.pending_item_name = None
-                self.pending_order_uuid = None
+                self.pending_item_uuid = None
                 self.waiting_yolo_response = False
                 return
 
@@ -316,7 +313,7 @@ class TaskPlannerNode(Node):
         except Exception as e:
             self.get_logger().error(f"YOLO 위치 요청 중 오류: {e}")
             self.pending_item_name = None
-            self.pending_order_uuid = None
+            self.pending_item_uuid = None
             self.waiting_yolo_response = False
 
     async def call_action(self, client, goal):
