@@ -3,6 +3,7 @@ float32 center_x
 float32 center_y
 float32 width
 float32 height
+string class_name   # 물품 바코드. 접근 위치 재탐지(/recapture_item) 요청에 사용
 ---
 # Result
 bool success

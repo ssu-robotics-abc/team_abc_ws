@@ -1,0 +1,11 @@
+# 현재 카메라 프레임에서 특정 물품을 즉시(라이브) 재탐지 요청
+# pick_item 이 대기 위치 도착 후 recapture_y 에서 호출한다.
+string class_name      # 탐지할 물품의 바코드(또는 'unknown')
+---
+bool success
+float32 center_x       # 색상 이미지 픽셀 좌표 (depth 와 동일 해상도)
+float32 center_y
+float32 width
+float32 height
+float32 confidence
+string message

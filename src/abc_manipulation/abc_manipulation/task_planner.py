@@ -188,7 +188,8 @@ class TaskPlannerNode(Node):
                 center_x=cx,
                 center_y=cy,
                 width=w,
-                height=h
+                height=h,
+                class_name=barcode
             )
             
             # 결과 응답 대기

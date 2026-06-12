@@ -27,7 +27,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/UserRequest.srv"
   "srv/RequestItem.srv"
   "srv/ResponseItem.srv"
-  DEPENDENCIES 
+  "srv/DetectItem.srv"
+  DEPENDENCIES
     std_msgs 
     action_msgs
     geometry_msgs
