@@ -29,6 +29,7 @@ setup(
         'console_scripts': [
             'stt_node = abc_speech.stt_node:main',
             'tts_node = abc_speech.tts_node:main',
+            'tts_test_client = abc_speech.tts_test_client:main',
             'stt_eval = abc_speech.eval_stt_metrics:main',
             'stt_server = abc_speech.stt_server:main',
         ],
