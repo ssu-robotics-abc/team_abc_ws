@@ -357,7 +357,7 @@ class SttNode(Node):
         remaining = remaining.strip()
 
         for word, quantity in quantity_words:
-            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩))?(?=\s|$)"
+            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩|만))?(?=\s|$)"
             match = re.match(pattern, remaining)
 
             if not match:
@@ -706,12 +706,16 @@ class SttNode(Node):
                     "맞습니다",
                     "응",
                     "어",
+                    "맞",
+                    "그래",
                 ]
 
                 no_words = [
                     "아니",
                     "아니요",
                     "틀려",
+                    "아니오",
+                    "아니에요",
                 ]
 
                 if any(word in normalized for word in no_words):
