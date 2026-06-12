@@ -1,0 +1,27 @@
+# ===================================================================
+# vlm_select - 물품 클래스 / 바코드 설정
+# ===================================================================
+# vlm_perception_node 가 시작 시 읽어 들이는 설정 파일.
+#
+#   - name    : Gemini VLM 이 인식/탐지에 사용하는 영문 클래스명
+#   - barcode : /request_item, /response_item, /vlm_request 에서
+#               class_name 으로 주고받는 바코드 값
+#
+# 물품을 추가/변경하려면 이 파일만 수정하면 된다 (코드 수정 불필요).
+# 바코드가 아직 없으면 "unknown" 처럼 임시 값을 넣어 둔다.
+# ===================================================================
+classes:
+  - name: Kancho
+    barcode: "8801062518210"
+  - name: chocopie
+    barcode: "8801117536411"
+  - name: pepero_almond
+    barcode: "8801062012725"
+  - name: pepero_original
+    barcode: "unknown"
+  - name: pepsi
+    barcode: "8801056248703"
+  - name: pocari_sweat
+    barcode: "8801097150010"
+  - name: soy_milk
+    barcode: "8801121768440"
