@@ -1,6 +1,7 @@
 import rclpy
 import requests
 import os
+import uuid
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -26,7 +27,7 @@ class TaskPlannerNode(Node):
         else:
             self.get_logger().error(f".env 파일 로드 실패: {env_path}")
 
-        self.web_server_url = os.getenv('WEB_SERVER_URL', 'https://ssu-abc-store-kiosk.ssammwu.info')
+        self.web_server_url = os.getenv('WEB_SERVER_URL')
         self.get_logger().info(f"설정된 웹 서버 URL: {self.web_server_url}")
 
         self.cb_group = ReentrantCallbackGroup()
@@ -61,8 +62,48 @@ class TaskPlannerNode(Node):
         self.request_queue = []
         self.detection_queue = []
         self.pending_item_name = None
+        self.pending_order_uuid = None
         self.waiting_yolo_response = False
         self.create_timer(1.0, self.run_sequence, callback_group=self.cb_group)
+
+    def send_web_request(self, endpoint: str, payload: dict, method: str = 'POST'):
+        url = f"{self.web_server_url}{endpoint}"
+        try:
+            self.get_logger().info(f"웹 서버 {method} 요청: {url} | Payload: {payload}")
+            
+            if method.upper() == 'PATCH':
+                res = requests.patch(url, json=payload, timeout=5.0)
+            else:
+                res = requests.post(url, json=payload, timeout=5.0)
+                
+            # 성공 응답 코드 처리 (200 OK, 201 Created, 204 No Content)
+            if res.status_code in [200, 201, 204]:
+                self.get_logger().info(f"웹 서버 {method} 전송 성공")
+                return True
+            else:
+                self.get_logger().error(f"웹 서버 {method} 전송 실패 (상태 코드: {res.status_code})")
+                return False
+        except requests.exceptions.RequestException as e:
+            self.get_logger().error(f"서버 {method} 통신 에러 {e}")
+            return False
+
+    #주문 후 상품 리스트 전송
+    def send_cart_list(self, order_uuid: str, raw_items: list):
+        payload = []
+        for item in raw_items:
+            payload.append({
+                "uuid": order_uuid,
+                "id": item["id"],
+                "amount": item["amount"]
+            })
+        self.send_web_request("/api/v1/cart", payload, method='POST')
+
+    def send_item_status(self, order_uuid: str, is_match: bool):
+        payload = {
+            "uuid": order_uuid,
+            "correct": is_match
+        }
+        self.send_web_request("/api/v1/cart", payload, method='PATCH')
 
     def vlm_request_callback(self, request, response):
         if len(request.class_name) == 0:
@@ -80,8 +121,10 @@ class TaskPlannerNode(Node):
             self.get_logger().error(response.message)
             return response
 
+        #uuid 생성
+        order_uuid = str(uuid.uuid4())
         added_items = []
-        post_payload = []
+        raw_items_payload = []
 
         for class_name, count in zip(request.class_name, request.iteration):
             item_name = str(class_name).strip()
@@ -95,13 +138,13 @@ class TaskPlannerNode(Node):
                 self.get_logger().error(response.message)
                 return response
 
-            post_payload.append({
+            raw_items_payload.append({
                 "id": item_name,
                 "amount": item_count
             })
 
             for _ in range(item_count):
-                self.request_queue.append(item_name)
+                self.request_queue.append((item_name, order_uuid))
                 added_items.append(item_name)
 
         if not added_items:
@@ -110,18 +153,7 @@ class TaskPlannerNode(Node):
             self.get_logger().error(response.message)
             return response
 
-        try:
-            self.get_logger().info(f"상품 정보 서버 POST 준비: {post_payload}")
-
-            res = requests.post(self.web_server_url+"/api/v1/cart", json=post_payload, timeout=5.0)
-
-            if res.status_code in [200, 201]:
-                self.get_logger().info(f"POST 서버 전송 성공")
-            else:
-                self.get_logger().error("POST 서버 전송 실패")
-        except requests.exceptions.RequestException as e:
-            self.get_logger().error(f"서버 POST 통신 에러 {e}")
-
+        self.send_cart_list(order_uuid, raw_items_payload)
 
         response.success = True
         response.message = f"상품 요청 {len(added_items)}개 접수"
@@ -147,8 +179,9 @@ class TaskPlannerNode(Node):
             self.get_logger().warn(response.message)
             return response
 
-        self.detection_queue.append(request)
+        self.detection_queue.append((request, self.pending_order_uuid))
         self.pending_item_name = None
+        self.pending_order_uuid = None
         self.waiting_yolo_response = False
 
         response.success = True
@@ -166,10 +199,14 @@ class TaskPlannerNode(Node):
 
         self.is_running = True
 
-        item = self.detection_queue.pop(0)
+        # 상품 목록에서 pop
+        item_data = self.detection_queue.pop(0)
+        item = item_data[0]
+        order_uuid = item_data[1]
+        barcode = str(item.class_name).strip()
+        is_match = False
 
         try:
-            barcode = str(item.class_name).strip()
             cx = float(item.center_x)
             cy = float(item.center_y)
             w = float(item.width)
@@ -188,7 +225,8 @@ class TaskPlannerNode(Node):
                 center_x=cx,
                 center_y=cy,
                 width=w,
-                height=h
+                height=h,
+                class_name=barcode
             )
             
             # 결과 응답 대기
@@ -197,15 +235,12 @@ class TaskPlannerNode(Node):
             if res1 and res1.success:
                 self.get_logger().info("Pick_item 성공! 물체를 잡았습니다.")
                 
-                self.get_logger().info("Scan 서버 연결 대기...")
                 if not self.scan_client.wait_for_server(timeout_sec=20):
                     self.get_logger().error("Scan 서버가 오프라인입니다.")
                     return
 
                 self.get_logger().info(">> scan_barcode 노드 호출: 바코드 스캔 및 검증")
-                goal_msg_scan = ScanBarcode.Goal(
-                    product_id=barcode,
-                    )
+                goal_msg_scan = ScanBarcode.Goal(product_id=barcode)
 
                 res2 = await self.call_action(self.scan_client, goal_msg_scan)
 
@@ -240,21 +275,26 @@ class TaskPlannerNode(Node):
 
             self.get_logger().info("==== 상품 처리 완료 ====")
         finally:
+            self.send_item_status(order_uuid, is_match)
             self.is_running = False
 
     def request_next_item_location(self):
         if self.waiting_yolo_response or not self.request_queue:
             return
 
-        item_name = self.request_queue.pop(0)
+        item_data = self.request_queue.pop(0)
+        item_name = item_data[0]
+        order_uuid = item_data[1]
+
         self.get_logger().info(f">> YOLO 위치 요청: {item_name}")
 
         if not self.yolo_request_client.wait_for_service(timeout_sec=5):
             self.get_logger().error("YOLO 요청 서비스(/request_item)가 준비되지 않았습니다.")
-            self.request_queue.insert(0, item_name)
+            self.request_queue.insert(0, item_data)
             return
 
         self.pending_item_name = item_name
+        self.pending_order_uuid = order_uuid
         self.waiting_yolo_response = True
 
         req = RequestItem.Request()
@@ -269,6 +309,7 @@ class TaskPlannerNode(Node):
             if not yolo_result.success:
                 self.get_logger().error(f"YOLO 요청 실패: {yolo_result.message}")
                 self.pending_item_name = None
+                self.pending_order_uuid = None
                 self.waiting_yolo_response = False
                 return
 
@@ -276,6 +317,7 @@ class TaskPlannerNode(Node):
         except Exception as e:
             self.get_logger().error(f"YOLO 위치 요청 중 오류: {e}")
             self.pending_item_name = None
+            self.pending_order_uuid = None
             self.waiting_yolo_response = False
 
     async def call_action(self, client, goal):

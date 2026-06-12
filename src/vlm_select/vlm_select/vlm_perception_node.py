@@ -50,6 +50,7 @@ from abc_interfaces.srv import UserRequest     # /vlm_to_tts, /vlm_request
 from abc_interfaces.srv import Stt             # /stt_results
 from abc_interfaces.srv import RequestItem     # /request_item (YOLO 통합)
 from abc_interfaces.srv import ResponseItem    # /response_item (YOLO 통합)
+from abc_interfaces.srv import DetectItem      # /recapture_item (접근 위치 라이브 재탐지)
 
 
 # ============================================================
@@ -272,6 +273,117 @@ def analyze_command_and_detect(model, cv_image, user_command, target_classes):
 
 
 # ============================================================
+# Gemini VLM (detection-only): 현재 프레임 → 박스 좌표만 탐지
+# 두 번째(접근 위치) 호출에서 사용. 명령 해석 없이 박스만 다시 찾는다.
+# ============================================================
+def detect_objects_from_gemini(model, cv_image, target_classes):
+    """
+    명령 해석 없이, 현재 이미지에서 target_classes 에 속하는 물품을 탐지해
+    클래스명 + 박스 좌표(원본 픽셀)를 반환한다.
+
+    반환값: [{"class_name", "confidence", "center_x", "center_y",
+              "width", "height"}, ...]  (실패/오류 시 빈 리스트)
+    """
+    if model is None:
+        return []
+
+    orig_h, orig_w = cv_image.shape[:2]
+    send_image = cv2.resize(cv_image, (640, 480))
+    ok, buf = cv2.imencode('.jpg', send_image)
+    if not ok:
+        print("[VLM 탐지 오류] 이미지 인코딩 실패")
+        return []
+    image_bytes = buf.tobytes()
+
+    prompt = (
+        "너는 카메라 이미지에서 진열된 물품을 찾아 위치를 출력하는 객체 탐지 모듈이다.\n"
+        f"다음 리스트의 영문 클래스명에 해당하는 물품만 탐지하라: {target_classes}\n"
+        "리스트에 없는 물체는 절대 출력하지 마라.\n"
+        "해당 물품이 이미지에 보이면 모두 찾아 각 물품마다 하나의 항목을 만들어라.\n"
+        "박스 좌표(box_2d)는 [ymin, xmin, ymax, xmax] 순서이며, 이미지 왼쪽/위를 0,\n"
+        "오른쪽/아래를 1000 으로 하는 0~1000 정규화 정수 좌표로 출력하라.\n"
+        "confidence 는 0.0~1.0 사이 확신도이다.\n"
+        "출력은 반드시 아래 구조의 JSON 배열(Array)로만 반환하고, 없으면 []을 반환하라.\n"
+        "예시:\n"
+        "[\n"
+        "  {\"class_name\": \"pepsi\", \"box_2d\": [120, 340, 600, 520], \"confidence\": 0.93}\n"
+        "]"
+    )
+
+    text = ""
+    try:
+        response = model.generate_content(
+            contents=[
+                prompt,
+                {"mime_type": "image/jpeg", "data": image_bytes}
+            ],
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+            request_options={"timeout": 15.0}
+        )
+
+        if not response.parts:
+            print("[VLM 탐지 오류] 응답이 비어있습니다.")
+            return []
+
+        text = response.text.strip()
+        print("===== Gemini Re-detect Raw Response =====")
+        print(text)
+        print("=========================================")
+
+        parsed_data = json.loads(text)
+        if isinstance(parsed_data, dict):
+            parsed_data = [parsed_data]
+        if not isinstance(parsed_data, list):
+            print(f"[VLM 탐지 파싱 실패] JSON 배열이 아닙니다: {parsed_data}")
+            return []
+
+        detections = []
+        for item in parsed_data:
+            if not isinstance(item, dict):
+                continue
+            c_name = item.get("class_name", "")
+            if c_name not in target_classes:
+                continue
+            box = item.get("box_2d")
+            if not (isinstance(box, (list, tuple)) and len(box) == 4):
+                continue
+
+            # [ymin, xmin, ymax, xmax] (0~1000) → 원본 픽셀 좌표
+            ymin, xmin, ymax, xmax = [float(v) for v in box]
+            x1 = xmin / 1000.0 * orig_w
+            y1 = ymin / 1000.0 * orig_h
+            x2 = xmax / 1000.0 * orig_w
+            y2 = ymax / 1000.0 * orig_h
+            x1, x2 = sorted((x1, x2))
+            y1, y2 = sorted((y1, y2))
+            x1 = max(0.0, min(x1, orig_w))
+            x2 = max(0.0, min(x2, orig_w))
+            y1 = max(0.0, min(y1, orig_h))
+            y2 = max(0.0, min(y2, orig_h))
+
+            detections.append({
+                "class_name": c_name,
+                "confidence": float(item.get("confidence", 1.0)),
+                "center_x": float((x1 + x2) / 2.0),
+                "center_y": float((y1 + y2) / 2.0),
+                "width": float(x2 - x1),
+                "height": float(y2 - y1),
+            })
+
+        return detections
+
+    except json.JSONDecodeError as e:
+        print(f"\n[VLM 탐지 파싱 실패] JSON 형식 오류: {e}\n응답 데이터: {text}\n")
+        return []
+    except Exception as e:
+        print(f"\n[VLM 탐지 통신 실패] {e}\n")
+        return []
+
+
+# ============================================================
 # DB API: 단일 상품 재고 조회
 # (기존 vlm_node.fetch_stock_from_db 와 동일 로직)
 # ============================================================
@@ -407,6 +519,20 @@ class VlmPerceptionNode(Node):
             self.response_service_name
         )
 
+        # ── 접근 위치 라이브 재탐지 서비스 서버 (두 번째 호출) ──────
+        # pick_item 이 대기 위치 도착 후 호출 → 현재 프레임을 즉시 재탐지.
+        # eye-in-hand 카메라라 명령 시점 박스가 무효이므로, 바뀐 시점에서
+        # 다시 탐지한 픽셀 좌표를 돌려준다 (depth 변환은 pick_item 이 수행).
+        self.recapture_service_name = (
+            self.declare_parameter("recapture_service_name", "/recapture_item")
+            .get_parameter_value().string_value
+        )
+        self.recapture_srv = self.create_service(
+            DetectItem,
+            self.recapture_service_name,
+            self.handle_recapture_request
+        )
+
         # ── (YOLO 역할) 추적 좌표 퍼블리셔 ─────────────────────────
         self.tracking_pub = self.create_publisher(Vector3, self.tracking_topic_name, 10)
         self.tracking_class = None   # 현재 추적 중인 영문 클래스명
@@ -416,10 +542,11 @@ class VlmPerceptionNode(Node):
         )
 
         self.get_logger().info(
-            "VLM Perception 노드 가동 완료 (단일 프롬프트 통합).\n"
+            "VLM Perception 노드 가동 완료 (단일 프롬프트 통합 + 접근 위치 재탐지).\n"
             f"  STT 서비스:      /stt_results\n"
             f"  물품 요청 서비스: {self.request_service_name}\n"
             f"  탐지 응답 서비스: {self.response_service_name}\n"
+            f"  재탐지 서비스:    {self.recapture_service_name}\n"
             f"  추적 토픽:        {self.tracking_topic_name}"
         )
 
@@ -685,6 +812,78 @@ class VlmPerceptionNode(Node):
                 )
         except Exception as e:
             self.get_logger().error(f"{self.response_service_name} 호출 실패: {e}")
+
+    # ================================================================
+    # 두 번째 호출: 접근 위치에서의 라이브 재탐지 (/recapture_item)
+    # ================================================================
+    def handle_recapture_request(self, request, response):
+        """
+        pick_item 이 대기 위치에 도착한 뒤 호출한다.
+        현재 카메라 프레임에서 요청 물품을 즉시 다시 탐지해 중심 픽셀을 돌려준다.
+        (캐시가 아니라 '지금 이 순간'의 프레임을 새로 탐지하는 것이 핵심)
+        """
+        requested_barcode = request.class_name.strip()
+
+        if not requested_barcode:
+            response.success = False
+            response.message = "에러: 요청된 클래스가 없습니다."
+            self.get_logger().error(response.message)
+            return response
+
+        target_class = self.barcode_to_class.get(requested_barcode)
+        if target_class is None:
+            response.success = False
+            response.message = f"에러: '{requested_barcode}'은(는) config 에 없는 바코드입니다."
+            self.get_logger().error(response.message)
+            return response
+
+        if self.latest_raw_image is None:
+            response.success = False
+            response.message = "에러: 아직 카메라 이미지가 수신되지 않았습니다."
+            self.get_logger().error(response.message)
+            return response
+
+        self.get_logger().info(f"▶ [재탐지] '{target_class}' 현재 프레임 라이브 탐지 (Gemini 호출)...")
+        detections = detect_objects_from_gemini(
+            self.model, self.latest_raw_image, [target_class]
+        )
+
+        # 요청 클래스 중 confidence 가 가장 높은 탐지 1건 선택
+        best = None
+        for det in detections:
+            if det["class_name"] != target_class:
+                continue
+            if best is None or det["confidence"] > best["confidence"]:
+                best = det
+
+        if best is None:
+            response.success = False
+            response.message = f"'{target_class}' 재탐지 실패 (현재 프레임에서 보이지 않음)"
+            self.get_logger().warn(response.message)
+            return response
+
+        response.success = True
+        response.center_x = best["center_x"]
+        response.center_y = best["center_y"]
+        response.width = best["width"]
+        response.height = best["height"]
+        response.confidence = best["confidence"]
+        response.message = f"'{target_class}' 재탐지 완료"
+        self.get_logger().info(
+            f"✅ [재탐지] {target_class} → px=({best['center_x']:.0f}, {best['center_y']:.0f}) "
+            f"conf={best['confidence']:.2f}"
+        )
+
+        # 추적 캐시도 최신 값으로 갱신 (이후 /yolo_tracking 재발행에 반영)
+        self.cached_detections[target_class] = {
+            "class_name": target_class,
+            "confidence": best["confidence"],
+            "center_x": best["center_x"],
+            "center_y": best["center_y"],
+            "width": best["width"],
+            "height": best["height"],
+        }
+        return response
 
     # ── (YOLO 역할) 추적 좌표 퍼블리시 ─────────────────────────────
     def tracking_timer_callback(self):

@@ -18,6 +18,7 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 
 from abc_interfaces.action import PickItem
+from abc_interfaces.srv import DetectItem
 from abc_manipulation.onrobot import RG, close_until_grip_detected
 from abc_manipulation.realsense import ImgNode
 
@@ -108,6 +109,12 @@ class PickItemServer(Node):
         self.create_subscription(
             Vector3, "/yolo_tracking", self._yolo_tracking_cb, 10,
             callback_group=cb_group,
+        )
+
+        # 접근 위치 라이브 재탐지 서비스 클라이언트 (/recapture_item)
+        # 대기 위치 도착 후 현재 프레임에서 물품을 다시 탐지받아 Y 를 보정한다.
+        self.recapture_cli = self.create_client(
+            DetectItem, "/recapture_item", callback_group=cb_group,
         )
 
         self.get_logger().info("🚀 pick_item 서버가 준비되었습니다. 플래너의 명령을 기다립니다.")
@@ -207,13 +214,60 @@ class PickItemServer(Node):
         self._latest_yolo_cx = msg.x
         self._latest_yolo_cy = msg.y
 
-    def recapture_y(self, fallback_y: float) -> float:
-        """wait_x 도달 후 YOLO 최신 픽셀로 Y 재계산 (execute_callback 초기 인식과 동일 로직)."""
-        cx_px = self._latest_yolo_cx
-        cy_px = self._latest_yolo_cy
-        if cx_px is None or cy_px is None:
-            self.get_logger().warn("⚠️ YOLO 추적 픽셀 없음 → fallback Y 사용")
+    def request_recapture(self, barcode: str):
+        """[vlm_perception_node 시나리오] /recapture_item 서비스로 '지금 프레임'
+        라이브 재탐지를 요청한다. 성공 시 (center_x, center_y) 픽셀, 실패 시 None.
+        서비스가 없으면(=yolo_node 시나리오) None 을 반환해 토픽 폴백으로 넘긴다."""
+        if not barcode:
+            self.get_logger().warn("⚠️ 바코드가 비어 재탐지 불가 → 폴백")
+            return None
+        if not self.recapture_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("⚠️ /recapture_item 서비스 없음 → /yolo_tracking 폴백")
+            return None
+
+        req = DetectItem.Request()
+        req.class_name = barcode
+        future = self.recapture_cli.call_async(req)
+
+        # execute_callback 은 worker 스레드에서 실행되고 executor 는 별도 스레드에서
+        # spin 중이므로, 여기서 future 완료까지 동기 대기해도 응답이 처리된다.
+        start = time.time()
+        while not future.done():
+            if time.time() - start > 20.0:
+                self.get_logger().warn("⚠️ 재탐지 응답 타임아웃 → fallback")
+                return None
+            time.sleep(0.02)
+
+        result = future.result()
+        if result is None or not result.success:
+            msg = result.message if result is not None else "응답 없음"
+            self.get_logger().warn(f"⚠️ 재탐지 실패({msg}) → fallback")
+            return None
+        return float(result.center_x), float(result.center_y)
+
+    def recapture_from_tracking_topic(self):
+        """[yolo_node 시나리오] /yolo_tracking 의 최신 픽셀을 사용 (없으면 None).
+        yolo_node 는 매 프레임 라이브로 발행하므로, 대기 위치 시점의 좌표가 들어온다."""
+        cx, cy = self._latest_yolo_cx, self._latest_yolo_cy
+        if cx is None or cy is None:
+            return None
+        return float(cx), float(cy)
+
+    def recapture_y(self, fallback_y: float, barcode: str) -> float:
+        """wait_x 도달 후 라이브 재탐지 픽셀로 Y 재계산 (eye-in-hand 시점 보정).
+
+        두 실행 시나리오를 모두 지원한다:
+          - vlm_perception_node 단독: /recapture_item 서비스(라이브 재탐지) 사용
+          - yolo_node + vlm_node:     서비스가 없으므로 /yolo_tracking 토픽(라이브) 폴백
+        둘 다 실패하면 초기 y(fallback_y) 를 그대로 쓴다.
+        """
+        recap = self.request_recapture(barcode)          # 1순위: 서비스 (vlm_perception_node)
+        if recap is None:
+            recap = self.recapture_from_tracking_topic()  # 2순위: 토픽 폴백 (yolo_node)
+        if recap is None:
+            self.get_logger().warn("⚠️ 재탐지 좌표 없음(서비스/토픽 모두) → fallback Y 사용")
             return fallback_y
+        cx_px, cy_px = recap
 
         depth_frame = self.img_node.get_depth_frame()
         if depth_frame is None:
@@ -226,8 +280,8 @@ class PickItemServer(Node):
         ppy = self.intrinsics["ppy"]
 
         h_d, w_d = depth_frame.shape
-        cx_i = int(cx_px)
-        cy_i = int(cy_px)
+        cx_i = max(0, min(int(cx_px), w_d - 1))
+        cy_i = max(0, min(int(cy_px), h_d - 1))
         roi_r = 5
         y0 = max(0, cy_i - roi_r); y1 = min(h_d, cy_i + roi_r + 1)
         x0 = max(0, cx_i - roi_r); x1 = min(w_d, cx_i + roi_r + 1)
@@ -243,7 +297,7 @@ class PickItemServer(Node):
         base_xyz = self.transform_to_base(cam_coords, current_pose)
 
         self.get_logger().info(
-            f"🎯 YOLO 재인식 Y: {fallback_y:.1f} → {base_xyz[1]:.1f} mm "
+            f"🎯 재탐지 Y: {fallback_y:.1f} → {base_xyz[1]:.1f} mm "
             f"(pixel=({cx_i},{cy_i}), depth={z_mm:.0f}mm)"
         )
         return float(base_xyz[1])
@@ -256,8 +310,9 @@ class PickItemServer(Node):
         cy = int(goal_handle.request.center_y)
         w = goal_handle.request.width
         target_h = goal_handle.request.height
+        barcode = goal_handle.request.class_name.strip()
 
-        self.get_logger().info(f"[액션 수신] 피킹 개시 -> 중심:({cx}, {cy})")
+        self.get_logger().info(f"[액션 수신] 피킹 개시 -> 중심:({cx}, {cy}) 바코드:{barcode}")
 
         feedback_msg = PickItem.Feedback()
         feedback_msg.state = "받은 픽셀 좌표를 기반으로 3D 위치 계산 중"
@@ -294,7 +349,7 @@ class PickItemServer(Node):
         )
 
         try:
-            self.execute_pick_motion(*base_xyz, target_w, target_h, z_dist, goal_handle)
+            self.execute_pick_motion(*base_xyz, target_w, target_h, z_dist, goal_handle, barcode)
             goal_handle.succeed()
             self.get_logger().info("✅ >>> 전체 피킹/안착/수직 재피킹 작업 성공 및 플래너에 완료 보고")
             return PickItem.Result(success=True)
@@ -303,7 +358,7 @@ class PickItemServer(Node):
             goal_handle.abort()
             return PickItem.Result(success=False)
 
-    def execute_pick_motion(self, x, y, z, target_width, target_height, z_dist, goal_handle):
+    def execute_pick_motion(self, x, y, z, target_width, target_height, z_dist, goal_handle, barcode=""):
         """수평 피킹 -> 바닥 안착 -> 수직 전환 측정 -> 수직 파지 통합 시퀀스"""
         self.gripper.open_gripper()
         feedback_msg = PickItem.Feedback()
@@ -315,19 +370,21 @@ class PickItemServer(Node):
         wait_x = x - (X_OFFSET + SIDE_APPROACH_DIST)
         grip_z = z + 30.0  # 중심보다 30mm 위를 파지
         pick_y = y + Y_PICK_OFFSET
-        self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
+        if not self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP"):
+            raise RuntimeError("접근 대기 위치 이동 실패")
         time.sleep(0.5)
 
-        # wait_x 도달 후 YOLO 재인식으로 Y 좌표 갱신
-        y_new = self.recapture_y(y)
+        # wait_x 도달 후 라이브 재탐지로 Y 좌표 갱신 (eye-in-hand 보정)
+        y_new = self.recapture_y(y, barcode)
         pick_y = y_new + Y_PICK_OFFSET
 
-        # Step 2: 진입 (수평 찌르기)
+        # Step 2: 진입 (수평 찌르기) — 실패 시 그리퍼를 닫지 않고 중단한다
         feedback_msg.state = "그립 처리를 위해 물품으로 진입 중"
         goal_handle.publish_feedback(feedback_msg)
 
         pick_x = x - X_OFFSET
-        self.plan_and_execute_pose([pick_x +10 , pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        if not self.plan_and_execute_pose([pick_x + 10, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN"):
+            raise RuntimeError("물품 진입(접근) 이동 실패 — 파지 중단")
 
         # Step 3: 파지
         feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
