@@ -398,7 +398,9 @@ class PickItemServer(Node):
         feedback_msg.state = "파지 완료 후 후방으로 후퇴 중"
         goal_handle.publish_feedback(feedback_msg)
         
-        self.plan_and_execute_pose([430, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
+        self.plan_and_execute_pose([pick_x +10 , pick_y, grip_z+5, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN")
+        time.sleep(0.5)
+        self.plan_and_execute_pose([430, pick_y, grip_z + 5 , HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP")
         time.sleep(0.5)
         self.get_logger().info("[DEBUG] retreat finished")
 
