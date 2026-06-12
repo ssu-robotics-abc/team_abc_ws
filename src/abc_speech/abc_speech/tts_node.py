@@ -19,6 +19,13 @@ class TtsNode(Node):
             self.vlm_callback,
         )
 
+        # STT 시작을 호출하는 서비스 추가
+        self._start_order_srv = self.create_service(
+            SttStart,
+            "/start_order",
+            self.start_order_callback,
+        )
+
         # STT 서비스 클라이언트 추가
         self.stt_client = self.create_client(
             SttStart,
@@ -93,6 +100,22 @@ class TtsNode(Node):
                 self.play_tts("주문을 시작해주세요.")
                 
                 self.trigger_stt()
+
+    def start_order_callback(self, request, response):
+        if not request.start:
+            response.success = False
+            return response
+
+        try:
+            self.play_tts("주문을 시작해주세요. 상품명과 수량을 말씀해주세요.")
+            self.trigger_stt()
+            response.success = True
+            
+        except Exception as e:
+            self.get_logger().error(f"start_order 처리 실패: {e}")
+            response.success = False
+
+        return response
 
     def vlm_callback(self, request, response):
         class_names = request.class_name
