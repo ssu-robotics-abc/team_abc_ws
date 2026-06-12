@@ -25,3 +25,5 @@ classes:
     barcode: "8801097150010"
   - name: soy_milk
     barcode: "8801121768440"
+  - name: orange_juice
+    barcode: "8801056071226"

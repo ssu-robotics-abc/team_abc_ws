@@ -43,6 +43,7 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import Vector3
 from cv_bridge import CvBridge
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 from dotenv import load_dotenv
 
 # abc_interfaces 패키지의 서비스 임포트
@@ -127,6 +128,22 @@ def build_gemini_model():
 
 
 # ============================================================
+# Gemini 응답이 출력 토큰 한도(max_output_tokens)에 걸려 잘렸는지 판별
+# ============================================================
+def is_output_token_truncated(response) -> bool:
+    """finish_reason 이 MAX_TOKENS 면 출력 토큰 한도로 응답이 잘린 것이다.
+    이 경우 JSON 이 불완전하므로 파싱을 시도하지 않고 걸러낸다."""
+    try:
+        for cand in (getattr(response, "candidates", None) or []):
+            fr = getattr(cand, "finish_reason", None)
+            if getattr(fr, "name", None) == "MAX_TOKENS" or fr == 2:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+# ============================================================
 # Gemini VLM (단일 호출): 명령 + 이미지 → 타겟(개수) + 박스 좌표
 # ============================================================
 def analyze_command_and_detect(model, cv_image, user_command, target_classes):
@@ -196,6 +213,14 @@ def analyze_command_and_detect(model, cv_image, user_command, target_classes):
             ),
             request_options={"timeout": 15.0}
         )
+
+        # 출력 토큰 한도(MAX_TOKENS)로 응답이 잘린 경우: JSON 이 불완전하므로 무시
+        if is_output_token_truncated(response):
+            print(
+                "[VLM 토큰 한도] 응답이 출력 토큰 한도(MAX_TOKENS)에 도달해 잘렸습니다. "
+                "명령을 더 짧게 하거나 max_output_tokens 를 늘려 다시 시도하세요."
+            )
+            return []
 
         if not response.parts:
             print("[VLM 오류] 응답이 비어있습니다.")
@@ -267,6 +292,20 @@ def analyze_command_and_detect(model, cv_image, user_command, target_classes):
     except json.JSONDecodeError as e:
         print(f"\n[VLM 파싱 실패] JSON 형식 오류: {e}\n응답 데이터: {text}\n")
         return []
+    except google_exceptions.ResourceExhausted as e:
+        # HTTP 429: 분당 토큰/요청 한도(rate limit) 또는 일일 쿼터 초과
+        print(
+            f"\n[VLM 토큰/쿼터 한도] Gemini 사용량 한도(429)에 도달했습니다 "
+            f"(분당 토큰·요청 한도 또는 일일 쿼터 초과). 잠시 후 다시 시도하세요.\n상세: {e}\n"
+        )
+        return []
+    except google_exceptions.InvalidArgument as e:
+        # HTTP 400: 프롬프트+이미지가 모델 입력 토큰 한도를 초과하면 여기로 떨어진다.
+        print(
+            f"\n[VLM 토큰 한도] 입력이 너무 커서 거부되었습니다(400, 입력 토큰 한도 초과 가능). "
+            f"이미지 해상도나 명령 길이를 줄여 다시 시도하세요.\n상세: {e}\n"
+        )
+        return []
     except Exception as e:
         print(f"\n[VLM SDK 통신 실패] {e}\n")
         return []
@@ -324,6 +363,14 @@ def detect_objects_from_gemini(model, cv_image, target_classes):
             request_options={"timeout": 15.0}
         )
 
+        # 출력 토큰 한도(MAX_TOKENS)로 응답이 잘린 경우: JSON 이 불완전하므로 무시
+        if is_output_token_truncated(response):
+            print(
+                "[VLM 탐지 토큰 한도] 응답이 출력 토큰 한도(MAX_TOKENS)에 도달해 잘렸습니다. "
+                "max_output_tokens 를 늘려 다시 시도하세요."
+            )
+            return []
+
         if not response.parts:
             print("[VLM 탐지 오류] 응답이 비어있습니다.")
             return []
@@ -377,6 +424,20 @@ def detect_objects_from_gemini(model, cv_image, target_classes):
 
     except json.JSONDecodeError as e:
         print(f"\n[VLM 탐지 파싱 실패] JSON 형식 오류: {e}\n응답 데이터: {text}\n")
+        return []
+    except google_exceptions.ResourceExhausted as e:
+        # HTTP 429: 분당 토큰/요청 한도(rate limit) 또는 일일 쿼터 초과
+        print(
+            f"\n[VLM 탐지 토큰/쿼터 한도] Gemini 사용량 한도(429)에 도달했습니다 "
+            f"(분당 토큰·요청 한도 또는 일일 쿼터 초과). 잠시 후 다시 시도하세요.\n상세: {e}\n"
+        )
+        return []
+    except google_exceptions.InvalidArgument as e:
+        # HTTP 400: 입력이 모델 입력 토큰 한도를 초과하면 여기로 떨어진다.
+        print(
+            f"\n[VLM 탐지 토큰 한도] 입력이 너무 커서 거부되었습니다(400, 입력 토큰 한도 초과 가능). "
+            f"이미지 해상도를 줄여 다시 시도하세요.\n상세: {e}\n"
+        )
         return []
     except Exception as e:
         print(f"\n[VLM 탐지 통신 실패] {e}\n")
