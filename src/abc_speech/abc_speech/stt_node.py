@@ -292,6 +292,7 @@ class SttNode(Node):
             "죠",
             "조",
             "요",
+            "봐",
         ]
 
         pattern = r"(?:" + "|".join(map(re.escape, trailing_words)) + r")\s*$"
@@ -304,6 +305,7 @@ class SttNode(Node):
             "랑",
             "그리고",
             "하고",
+            "더",
         ]
 
         for word in filler_words:
@@ -357,7 +359,7 @@ class SttNode(Node):
         remaining = remaining.strip()
 
         for word, quantity in quantity_words:
-            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩))?(?=\s|$)"
+            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩|만))?(?=\s|$)"
             match = re.match(pattern, remaining)
 
             if not match:
@@ -704,6 +706,7 @@ class SttNode(Node):
                     "예",
                     "맞아",
                     "맞습니다",
+                    "맞다고",
                     "응",
                     "어",
                 ]
