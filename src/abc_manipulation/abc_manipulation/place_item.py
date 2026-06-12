@@ -25,7 +25,7 @@ VELOCITY_SCALE = 0.3
 ACCELERATION_SCALE = 0.3
 SAFE_X_MIN = 0.0
 SAFE_Y_MIN = -300.0
-SAFE_Y_MAX = 300.0
+SAFE_Y_MAX = 470.0
 SAFE_Z_MIN = 270.0
 SAFE_TRAVEL_Z = 400.0
 
@@ -72,8 +72,12 @@ class PlaceItemServer(Node):
             "joint_6": math.radians(90.0),
         }
 
-        self.pos_checkout = [408.0, 153.0, 342.0, 33.0, 180.0, 100.0]
-        self.pos_return = [408.0, -153.0, 342.0, 133.0, -172.0, -120.0]
+        #self.pos_checkout = [408.0, 153.0, 342.0, 33.0, 180.0, 100.0]
+        self.pos_checkout = [250.0, 450.0, 342.0, 33.0, 180.0, 100.0]
+        
+        #self.pos_return = [408.0, -153.0, 342.0, 133.0, -172.0, -120.0]
+        self.pos_return = [408.0, -153.0, 342.0, 133.0, -180.0, 100.0]
+        
         self.safe_z_offset = 100.0
 
         self._action_server = ActionServer(

@@ -144,36 +144,38 @@ class ScanBarcodeServer(Node):
         target_positions = self._make_joint_6_scan_positions(start_j6, step_rotation)
 
         last_target_j6 = None
-        for target_j6 in target_positions:
-            if self.is_scanned:
-                return True
-            if (time.time() - start_wait_time) > timeout_duration:
-                self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
-                return False
+        while not self.is_scanned:
+            for target_j6 in target_positions:
+                if self.is_scanned:
+                    return True
+                if (time.time() - start_wait_time) > timeout_duration:
+                    self.get_logger().warning("바코드 스캔 대기 시간이 초과되었습니다.")
+                    return False
 
-            if last_target_j6 is not None and abs(target_j6 - last_target_j6) < 1e-6:
-                continue
+                if last_target_j6 is not None and abs(target_j6 - last_target_j6) < 1e-6:
+                    continue
 
-            scan_goal_joints["joint_6"] = target_j6
+                scan_goal_joints["joint_6"] = target_j6
 
-            if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
-                self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
-                return False
-            last_target_j6 = target_j6
-            time.sleep(0.1)
+                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
+                    self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
+                    return False
+                last_target_j6 = target_j6
+                time.sleep(0.1)
 
         return self.is_scanned
 
     def _make_joint_6_scan_positions(self, start_j6, step):
-        # 한 방향으로 360° 한 바퀴 회전
-        positions = []
+        # 제한시간 동안 joint_6를 정방향/역방향으로 왕복 회전
+        forward_positions = []
         end_j6 = min(start_j6 + math.radians(360.0), JOINT_6_MAX)
         current = start_j6 + step
         while current < end_j6:
-            positions.append(current)
+            forward_positions.append(current)
             current += step
-        positions.append(end_j6)
-        return positions
+        forward_positions.append(end_j6)
+        backward_positions = list(reversed([start_j6] + forward_positions[:-1]))
+        return forward_positions + backward_positions
 
     def execute_callback(self, goal_handle):
         # 기존 로직과 동일
@@ -196,7 +198,7 @@ class ScanBarcodeServer(Node):
         goal_handle.publish_feedback(feedback_msg)
 
         start_wait_time = time.time()
-        timeout_duration = 30.0
+        timeout_duration = 50.0
         success_scan = self.sweep_joint_6_for_scan(start_wait_time, timeout_duration)
 
         result = ScanBarcode.Result()
