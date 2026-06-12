@@ -88,6 +88,14 @@ class TtsNode(Node):
 
         future.add_done_callback(callback)
 
+    def _start_order_sequence(self):
+        """Background sequence: play TTS prompt then trigger STT."""
+        try:
+            self.play_tts("주문을 시작해주세요. 상품명과 수량을 말씀해주세요.")
+            self.trigger_stt()
+        except Exception as e:
+            self.get_logger().error(f"_start_order_sequence 실패: {e}")
+
     def keyboard_listener(self):
         """키보드 입력 감지"""
         while rclpy.ok():
@@ -107,8 +115,8 @@ class TtsNode(Node):
             return response
 
         try:
-            self.play_tts("주문을 시작해주세요. 상품명과 수량을 말씀해주세요.")
-            self.trigger_stt()
+            # run play+trigger in background so the service returns quickly
+            threading.Thread(target=self._start_order_sequence, daemon=True).start()
             response.success = True
             
         except Exception as e:
