@@ -21,11 +21,12 @@ class SttNode(Node):
 
         self.declare_parameter("language", "ko-KR")
         self.declare_parameter("device_index", -1)
-        self.declare_parameter("energy_threshold", 50.0)
-        # self.declare_parameter("pause_threshold", 0.8)
-        # self.declare_parameter("phrase_time_limit", 5.0)
-        self.declare_parameter("pause_threshold", 1.5)
-        self.declare_parameter("phrase_time_limit", 10.0)
+        # self.declare_parameter("energy_threshold", 50.0)
+        self.declare_parameter("energy_threshold", 30.0)
+        # self.declare_parameter("pause_threshold", 1.5)
+        # self.declare_parameter("phrase_time_limit", 15.0)
+        self.declare_parameter("pause_threshold", 2.0)
+        self.declare_parameter("phrase_time_limit", 20.0)
         self.declare_parameter("dynamic_energy", True)
         self.declare_parameter("ambient_duration", 2.0)
 
@@ -90,7 +91,8 @@ class SttNode(Node):
             "펩시",
             "포카리",
             "두유",
-            "빼빼로 아몬드",
+            "빼빼로",
+            # "빼빼로 아몬드",
             # "빼빼로 오리지널",
         ]
 
@@ -100,18 +102,24 @@ class SttNode(Node):
             # "우유":                  "두유",
             "fc":                   "펩시",
             "pepsi":                "펩시",
+            "택시":                  "펩시",
             "pocari":               "포카리",
             "포카리스웨트":            "포카리",
+            "목걸이":                 "포카리",
             # "오카리":                 "포카리",
             # "오카리스웨트":            "포카리",
             "간초":                 "칸쵸",
             "관초":                 "칸쵸",
             "칸초":                 "칸쵸",
-            "칸죠":                 "칸쵸",
             "한초":                  "칸쵸",
-            # "함초":                  "칸쵸",
+            "강초롱":                "칸쵸",
+            "광초":                  "칸쵸",
+            "함초":                  "칸쵸",
+            "안주":                  "칸쵸",
+            "한치":                  "칸쵸",
             "pepero almond":        "빼빼로",
             "아몬드 빼빼로":           "빼빼로",
+            "빼빼로 아몬드":               "빼빼로",
             # "pepero original":      "빼빼로 오리지널",
             # "오리지널 빼빼로":          "빼빼로 오리지널"
         }
@@ -188,6 +196,7 @@ class SttNode(Node):
 
         try:
             self._start_background_listening()
+            time.sleep(0.2)
             self._play_ready_beep()
 
             self._accepting_speech = True
@@ -270,15 +279,35 @@ class SttNode(Node):
             if alias in text:
                 text = text.replace(alias, canonical)
 
+        trailing_words = [
+            "주문해 주세요",
+            "시켜 주세요",
+            "주문해줘",
+            "시켜 줘",
+            "주십시오"
+            "주문할게",
+            "부탁해요",
+            "부탁해",
+            "주세요",
+            "주라",
+            "줘",
+            "죠",
+            "조",
+            "요",
+            "봐",
+        ]
+
+        pattern = r"(?:" + "|".join(map(re.escape, trailing_words)) + r")\s*$"
+        while re.search(pattern, text):
+            text = re.sub(pattern, "", text).strip()
+
+        text = re.sub(r"(^|\s)이랑(\s|$)", " ", text)
+
         filler_words = [
-        "랑",
-        "이랑",
-        "그리고",
-        "주세요",
-        "줘",
-        "죠",
-        "조",
-        "하고",
+            "랑",
+            "그리고",
+            "하고",
+            "더",
         ]
 
         for word in filler_words:
@@ -314,20 +343,38 @@ class SttNode(Node):
         return best_product, best_score
 
 
+    def _extract_leading_quantity(self, remaining: str):
+        quantity_words = [
+            ("하나", 1),
+            ("세계", 3),
+            ("한", 1),
+            ("wanna", 1),
+            ("1", 1),
+            ("두", 2),
+            ("둘", 2),
+            ("2", 2),
+            ("세", 3),
+            ("셋", 3),
+            ("3", 3),
+        ]
+
+        remaining = remaining.strip()
+
+        for word, quantity in quantity_words:
+            pattern = rf"^{re.escape(word)}(?:\s*(?:개씩|개|씩|만))?(?=\s|$)"
+            match = re.match(pattern, remaining)
+
+            if not match:
+                continue
+
+            remaining = remaining[match.end():].strip()
+            return quantity, remaining
+
+        return 1, remaining
+
+
     def _extract_product_and_quantity(self, text: str):
         orders = []
-
-        number_map = {
-            "한": 1,
-            "하나": 1,
-            "1": 1,
-            "두": 2,
-            "둘": 2,
-            "2": 2,
-            "세": 3,
-            "셋": 3,
-            "3": 3,
-        }
 
         remaining = text.strip()
 
@@ -341,12 +388,17 @@ class SttNode(Node):
 
             # 1. exact product match
             self.get_logger().info(f"[===exact product match")
+            exact_match = None
+
             for p in products:
-                if p in remaining:
-                    product = p
-                    self.get_logger().info(f"[product] {product}")
-                    remaining = remaining.replace(p, "", 1)
+                if remaining.startswith(p):
+                    exact_match = p
                     break
+
+            if exact_match:
+                product = exact_match
+                self.get_logger().info(f"[product] {product}")
+                remaining = remaining[len(product):].strip()
 
             # # 2. ambiguous base product
             # self.get_logger().info(f"[===ambiguous base product")
@@ -436,7 +488,7 @@ class SttNode(Node):
 
 
             if not product:
-                if best_score >= 20:
+                if best_score >= 55:
                     self.get_logger().info(f"[STATUS] parse_failed")
                     return {
                         "status": "parse_failed",
@@ -459,17 +511,9 @@ class SttNode(Node):
 
             # 4. quantity match
             self.get_logger().info(f"[===quantity match]")
-            quantity = None
-
-            for word, num in number_map.items():
-                if word in remaining:
-                    quantity = num
-                    remaining = remaining.replace(word, "", 1)
-                    remaining = remaining.replace("개", "", 1)
-                    break
-
-            if quantity is None:
-                quantity = 1
+            quantity, remaining = self._extract_leading_quantity(
+                remaining
+            )
 
             orders.append((product, quantity))
 
@@ -601,15 +645,21 @@ class SttNode(Node):
                 self.get_logger().info("TTS request 성공")
 
                 self._start_background_listening()
+                time.sleep(0.2)
+                self._play_ready_beep()
                 self._accepting_speech = True
                 self.get_logger().info("STT 입력 대기 재개")
 
             else:
                 self.get_logger().warning("TTS request 실패")
+                time.sleep(0.2)
+                self._play_ready_beep()
                 self._accepting_speech = True
 
         except Exception as e:
             self.get_logger().error(f"TTS service call 실패: {e}")  
+            time.sleep(0.2)
+            self._play_ready_beep()
             self._accepting_speech = True
 
 
@@ -658,14 +708,19 @@ class SttNode(Node):
                     "예",
                     "맞아",
                     "맞습니다",
+                    "맞다고",
                     "응",
                     "어",
+                    "맞",
+                    "그래",
                 ]
 
                 no_words = [
                     "아니",
                     "아니요",
                     "틀려",
+                    "아니오",
+                    "아니에요",
                 ]
 
                 if any(word in normalized for word in no_words):

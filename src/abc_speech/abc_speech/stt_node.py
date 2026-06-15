@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import speech_recognition as sr
-from abc_interfaces.srv import Stt, SttStart, Tts
+from abc_interfaces.srv import Stt, SttStart, Tts, SttMatched
 
 
 class SttNode(Node):
@@ -21,7 +21,8 @@ class SttNode(Node):
 
         self.declare_parameter("language", "ko-KR")
         self.declare_parameter("device_index", -1)
-        self.declare_parameter("energy_threshold", 50.0)
+        # self.declare_parameter("energy_threshold", 50.0)
+        self.declare_parameter("energy_threshold", 30.0)
         # self.declare_parameter("pause_threshold", 0.8)
         # self.declare_parameter("phrase_time_limit", 5.0)
         self.declare_parameter("pause_threshold", 1.5)
@@ -66,6 +67,9 @@ class SttNode(Node):
         # 기존 STT 결과 전달 client
         self._vlm_client = self.create_client(Stt, "/stt_results")
 
+        # stt_matched 서비스 client (STT 매칭 성공 시)
+        self._stt_matched_client = self.create_client(SttMatched, "/stt_matched")
+
         # stt_start 서비스 서버
         self._start_srv = self.create_service(
             SttStart,
@@ -90,8 +94,8 @@ class SttNode(Node):
             "펩시",
             "포카리",
             "두유",
-            # "빼빼로",
-            "빼빼로 아몬드",
+            "빼빼로",
+            # "아몬드 빼빼로",
             # "빼빼로 오리지널",
         ]
 
@@ -111,15 +115,27 @@ class SttNode(Node):
             "관초":                 "칸쵸",
             "칸초":                 "칸쵸",
             "한초":                  "칸쵸",
+            "산초":                 "칸쵸",
             "강초롱":                "칸쵸",
             "광초":                  "칸쵸",
-            # "함초":                  "칸쵸",
-            # "안주":                  "칸쵸",
-            "pepero almond":        "빼빼로 아몬드",
-            "아몬드 빼빼로":           "빼빼로 아몬드",
-            "빼빼로 아":               "빼빼로 아몬드",
+            "함초":                  "칸쵸",
+            
+            "안주":                  "칸쵸",
+            "pepero almond":        "빼빼로",
+            "빼빼로 아몬드":           "빼빼로",
+            "아몬드 빼빼로":           "빼빼로",
+            # "빼빼로 아":               "아몬드 빼빼로",
             # "pepero original":      "빼빼로 오리지널",
             # "오리지널 빼빼로":          "빼빼로 오리지널"
+        }
+
+        self._vlm_class_map = {
+            "칸쵸": "Kancho",
+            "초코파이": "chocopie",
+            "펩시": "pepsi",
+            "포카리": "pocari_sweat",
+            "두유": "soy_milk",
+            "빼빼로": "pepero_almond",
         }
 
         # self._ambiguous_products = {
@@ -306,6 +322,7 @@ class SttNode(Node):
             "그리고",
             "하고",
             "더",
+            "의",
         ]
 
         for word in filler_words:
@@ -734,7 +751,8 @@ class SttNode(Node):
                 elif any(word in normalized for word in yes_words):
 
                     self.get_logger().info(
-                        f"[VLM 주문] {self._pending_confirmation}"
+                        f"\n[STT 확인됨 - VLM 처리 필요] {self._pending_confirmation}\n"
+                        f"VLM(Gemini)으로 자연어 분석 처리로 이동..."
                     )
 
                     req = Stt.Request()
@@ -776,11 +794,25 @@ class SttNode(Node):
                 orders = result["orders"]
 
                 if orders:
-                    final_text = " ".join(
-                        f"{product} {quantity}개"
-                        for product, quantity in orders
+                    # STT 매칭 성공: 상품명/수량 배열로 바로 DB 조회 (VLM 처리 안 함)
+                    class_names = [
+                        self._vlm_class_map.get(product, product)
+                        for product, _ in orders
+                    ]
+                    quantities = [quantity for _, quantity in orders]
+                    
+                    self.get_logger().info(
+                        f"\n[STT 매칭 성공 - VLM 처리 안 함] class_names={class_names}, quantities={quantities}\n"
+                        f"바로 DB 재고 조회로 이동..."
                     )
-                    self._send_order(final_text)
+                    
+                    req = SttMatched.Request()
+                    req.class_name = class_names
+                    req.iteration = quantities
+
+                    future = self._stt_matched_client.call_async(req)
+                    future.add_done_callback(self._service_response_callback)
+                    self._pause_accepting_speech()
 
                 #상품 추출 실패
                 else:

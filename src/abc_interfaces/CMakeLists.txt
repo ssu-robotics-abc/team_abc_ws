@@ -28,6 +28,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/RequestItem.srv"
   "srv/ResponseItem.srv"
   "srv/DetectItem.srv"
+  "srv/SttMatched.srv"
   DEPENDENCIES
     std_msgs 
     action_msgs

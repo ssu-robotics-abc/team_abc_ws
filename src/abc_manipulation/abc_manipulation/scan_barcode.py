@@ -157,7 +157,7 @@ class ScanBarcodeServer(Node):
 
                 scan_goal_joints["joint_6"] = target_j6
 
-                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.5, a_scale=0.2):
+                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.8, a_scale=0.2):
                     self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
                     return False
                 last_target_j6 = target_j6
@@ -215,6 +215,12 @@ class ScanBarcodeServer(Node):
             result.success = False
             result.is_corrected = False
             self.get_logger().error("바코드 스캔 실패: 바코드를 읽지 못했거나 로봇 이동이 실패했습니다.")
+
+        if not self.plan_and_execute_joints(self.joints_scanner, planner_id="PTP", v_scale=0.4, a_scale=0.2):
+            self.get_logger().error("⚠️ joint_6 회전 원복 계획 실패!")
+            goal_handle.abort()
+            return ScanBarcode.Result(success=False, is_corrected=False)
+        time.sleep(0.5)
 
         '''
         if not self.plan_and_execute_joints(self.joints_home_horiz, planner_id="PTP"):

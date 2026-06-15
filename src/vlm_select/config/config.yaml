@@ -17,8 +17,6 @@ classes:
     barcode: "8801117536411"
   - name: pepero_almond
     barcode: "8801062012725"
-  - name: pepero_original
-    barcode: "unknown"
   - name: pepsi
     barcode: "8801056248703"
   - name: pocari_sweat

@@ -169,8 +169,9 @@ class YoloNode(Node):
         if self.debug_view:
             results = self.model(frame, conf=0.5, verbose=False)
             result = results[0]
-            debug_frame = self.draw_debug_frame(frame, result)
-            cv2.imshow("YOLO Real-time Debug", debug_frame)
+            # debug_frame = self.draw_debug_frame(frame, result)
+            # cv2.imshow("YOLO Real-time Debug", debug_frame)
+            cv2.imshow("YOLO Real-time Debug", frame)
             cv2.waitKey(1)
 
     def detect_requested_item(self, requested_class_name):
@@ -241,6 +242,56 @@ class YoloNode(Node):
                 )
         except Exception as e:
             self.get_logger().error(f"{self.response_service_name} 호출 실패: {e}")
+
+    def draw_debug_frame(self, frame, result):
+        debug_frame = frame.copy()
+
+        if result.boxes is None:
+            return debug_frame
+
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            
+            barcode = str(self.get_class_name(cls_id)) # 바코드
+            display_name = self.class_display_names.get(cls_id, barcode) # 상품명
+            confidence = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            
+            label = f"{display_name} ({barcode}) {confidence:.2f}"
+
+            color = (0, 255, 0)
+
+            cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
+
+            text_size, baseline = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                1
+            )
+            text_w, text_h = text_size
+            text_y = max(y1, text_h + baseline + 4)
+
+            cv2.rectangle(
+                debug_frame,
+                (x1, text_y - text_h - baseline - 4),
+                (x1 + text_w + 4, text_y),
+                color,
+                -1
+            )
+            cv2.putText(
+                debug_frame,
+                label,
+                (x1 + 2, text_y - baseline - 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                1,
+                cv2.LINE_AA
+            )
+
+        return debug_frame
+
 
     def draw_debug_frame(self, frame, result):
         debug_frame = frame.copy()

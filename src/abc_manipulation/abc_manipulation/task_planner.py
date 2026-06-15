@@ -105,6 +105,18 @@ class TaskPlannerNode(Node):
         self.send_web_request("/api/v1/cart", payload, method='PATCH')
 
     def vlm_request_callback(self, request, response):
+        if (
+            self.is_running
+            or self.waiting_yolo_response
+            or self.pending_item_name is not None
+            or self.request_queue
+            or self.detection_queue
+        ):
+            response.success = False
+            response.message = "이전 상품 요청을 처리 중입니다."
+            self.get_logger().warn(response.message)
+            return response
+
         if len(request.class_name) == 0:
             response.success = False
             response.message = "요청된 상품이 없습니다."
