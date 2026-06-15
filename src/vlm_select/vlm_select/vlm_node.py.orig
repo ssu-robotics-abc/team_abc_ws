@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 # abc_interfaces 패키지의 UserRequest 서비스 임포트
 from abc_interfaces.srv import UserRequest
 
-# stt_interfaces 패키지의 Stt, SttMatched 서비스 임포트
-from abc_interfaces.srv import Stt, SttMatched
+# stt_interfaces 패키지의 Stt 서비스 임포트
+from abc_interfaces.srv import Stt
 
 # 설정 파라미터
 TARGET_CLASSES = [
@@ -247,15 +247,6 @@ class VlmLogicNode(Node):
             self.stt_service_callback
         )
 
-        # ── STT 매칭 성공 서비스 서버 ──────────────────────────────
-        # /stt_matched 서비스 서버 생성 (SttMatched.srv 타입)
-        # STT에서 매칭 성공한 결과를 직접 DB 조회용으로 수신
-        self.stt_matched_srv = self.create_service(
-            SttMatched,
-            "/stt_matched",
-            self.stt_matched_service_callback
-        )
-
         # ── 요구사항 3 ──────────────────────────────────────────────
         # /vlm_to_tts 서비스 클라이언트 (재고 부족 시 TTS 알림용)
         self.tts_cli = self.create_client(UserRequest, "/vlm_to_tts")
@@ -264,7 +255,7 @@ class VlmLogicNode(Node):
         # /vlm_request 서비스 클라이언트 (재고 충분 시 YOLO 요청용)
         self.vlm_cli = self.create_client(UserRequest, "/vlm_request")
 
-        self.get_logger().info("VLM Logic 노드 가동 완료. STT 서비스(/stt_results, /stt_matched) 대기 중...")
+        self.get_logger().info("VLM Logic 노드 가동 완료. STT 서비스(/stt_results) 대기 중...")
 
     # ── 카메라 콜백 ─────────────────────────────────────────────────
     def raw_image_callback(self, msg):
@@ -308,59 +299,23 @@ class VlmLogicNode(Node):
         self.get_logger().info(f"▶ 타겟 분석 완료: {target_list}")
 
         # 2단계: DB 재고 조회 및 재고 판단
-        self.process_targets_with_db(target_list, source="VLM")
+        self.process_targets_with_db(target_list)
 
         response.success = True
         response.message = "명령 처리를 시작했습니다."
         return response
 
-    # ── STT 매칭 성공 서비스 콜백 ────────────────────────────────
-    def stt_matched_service_callback(self, request: SttMatched.Request, response: SttMatched.Response):
-        """
-        /stt_matched 서비스 요청을 처리한다.
-        request.class_name: STT에서 매칭 성공한 상품 class_name 배열
-        request.iteration: 각 상품의 요구 개수 배열
-        
-        STT가 이미 상품 매칭을 성공했으므로, 바로 DB 재고 조회를 수행하고
-        재고 충분/부족에 따라 처리한다. VLM은 처리하지 않음.
-        """
-        if not request.class_name or len(request.class_name) != len(request.iteration):
-            self.get_logger().warn("[STT 매칭 성공] 빈 또는 불일치한 class_name/iteration 수신. 무시합니다.")
-            response.success = False
-            response.message = "빈 명령 또는 형식 오류입니다."
-            return response
-
-        self.get_logger().info(
-            f"\n[STT 매칭 성공 - VLM 처리 안 함] class_name={list(request.class_name)}, "
-            f"iteration={list(request.iteration)} 수신됨. 바로 DB 조회 시작..."
-        )
-
-        # STT 매칭 성공한 결과를 target_list 형식으로 변환
-        target_list = [
-            {"class_name": cn, "iteration": it}
-            for cn, it in zip(request.class_name, request.iteration)
-        ]
-
-        # DB 조회 및 재고 판단 (기존 로직 재사용)
-        self.process_targets_with_db(target_list, source="STT")
-
-        response.success = True
-        response.message = "STT 매칭 성공: DB 조회 시작"
-        return response
-
     # ── 요구사항 2~4: DB 조회 + 재고 판단 + 서비스 전송 ────────────
-    def process_targets_with_db(self, target_list: list, source: str = "VLM"):
+    def process_targets_with_db(self, target_list: list):
         """
         target_list: [{"class_name": str, "iteration": int}, ...]
-        source: "VLM" (Gemini 분석/VLM 처리함) 또는 "STT" (STT 직접 매칭/VLM 처리 안 함)
 
         1. 각 상품의 DB 재고를 조회한다.
         2. 재고가 부족한 상품이 하나라도 있으면 /vlm_to_tts 서비스를 호출한다.
         3. 모든 상품의 재고가 충분하면 /vlm_request 서비스를 호출한다.
            이때 class_name 대신 DB에서 받은 barcode_data를 전송한다.
         """
-        source_label = "VLM으로 분석 처리" if source == "VLM" else "STT 직접 매칭 (VLM 처리 안 함)"
-        self.get_logger().info(f"▶ [{source_label}] DB 재고 조회 시작...")
+        self.get_logger().info("▶ DB 재고 조회 시작...")
 
         insufficient_class_names = []   # 부족한 상품 class_name
         insufficient_stocks     = []    # 부족한 상품의 현재 DB 재고
@@ -409,7 +364,7 @@ class VlmLogicNode(Node):
         # ── 요구사항 3: 부족 상품이 있으면 /vlm_to_tts 호출 ───────
         if insufficient_class_names:
             self.get_logger().warn(
-                f"▶ [{source_label}] 재고 부족 상품 발생 → /vlm_to_tts 서비스 전송\n"
+                f"▶ 재고 부족 상품 발생 → /vlm_to_tts 서비스 전송\n"
                 f"  부족 상품: {insufficient_class_names}\n"
                 f"  현재 재고: {insufficient_stocks}"
             )
@@ -418,7 +373,7 @@ class VlmLogicNode(Node):
 
         # ── 요구사항 4: 모든 재고 충분 → /vlm_request 호출 ────────
         self.get_logger().info(
-            f"▶ [{source_label}] 모든 상품 재고 충분 → /vlm_request 서비스 전송\n"
+            f"▶ 모든 상품 재고 충분 → /vlm_request 서비스 전송\n"
             f"  바코드 목록: {sufficient_barcodes}\n"
             f"  요구 개수:   {sufficient_iterations}"
         )
