@@ -289,7 +289,11 @@ class VlmLogicNode(Node):
         # 1단계: Gemini로 명령 분석
         self.get_logger().info("▶ Gemini API로 문맥 분석 요청 중...")
         target_list = get_target_from_gemini(self.latest_raw_image, user_command)
+<<<<<<< HEAD
         
+=======
+
+>>>>>>> b1b5d3f688550093cfff9f8c797da0e8b53849dc
         if not target_list:
             self.get_logger().error("유효한 타겟을 찾지 못했거나 응답이 비어있습니다.")
             response.success = False

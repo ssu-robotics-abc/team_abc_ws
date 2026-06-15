@@ -795,10 +795,14 @@ class SttNode(Node):
 
                 if orders:
                     # STT 매칭 성공: 상품명/수량 배열로 바로 DB 조회 (VLM 처리 안 함)
+<<<<<<< HEAD
                     class_names = [
                         self._vlm_class_map.get(product, product)
                         for product, _ in orders
                     ]
+=======
+                    class_names = [product for product, _ in orders]
+>>>>>>> b1b5d3f688550093cfff9f8c797da0e8b53849dc
                     quantities = [quantity for _, quantity in orders]
                     
                     self.get_logger().info(

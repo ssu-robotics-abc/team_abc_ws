@@ -40,6 +40,22 @@ src/
 - `abc_manipulation`: Runs the manipulation pipeline. `task_planner` consumes detections and calls the `pick_item`, `scan_barcode`, and `place_item` action servers. `onrobot.py` wraps gripper access, and `realsense.py` contains image/depth helper logic.
 - `dsr_moveit_config_m0609`: Provides robot model and MoveIt configuration consumed by manipulation and robot bringup. Treat this as robot configuration data, not application logic.
 
+## External Service Dependencies
+
+- **Google Web Speech API**: `abc_speech/stt_node` uses `speech_recognition.recognize_google()` for speech recognition. Requires:
+  - Active internet connection
+  - Audio data sent to Google servers
+  - Language parameter set to `ko-KR` (Korean)
+  - No API key required (uses unofficial Google service)
+
+- **Google Gemini API**: `vlm_select/vlm_node` uses Gemini for natural language understanding of user commands that STT fails to match. Requires:
+  - GEMINI_API_KEY environment variable (configured in .env)
+  - Internet connection for API calls
+
+- **Local Stock Database API**: `vlm_select/vlm_node` checks inventory at configured DB_BASE_URL (default: `https://ssu-abc-store-api.ssammwu.info`)
+  - Queries `/api/v1/stock/{class_name}` endpoint
+  - Returns remaining stock and barcode data
+
 ## Important Data Flows
 
 ### Runtime Request Flow
