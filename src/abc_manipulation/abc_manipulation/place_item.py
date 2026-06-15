@@ -21,8 +21,8 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.3
-ACCELERATION_SCALE = 0.3
+VELOCITY_SCALE = 0.5
+ACCELERATION_SCALE = 0.2
 SAFE_X_MIN = 0.0
 SAFE_Y_MIN = -300.0
 SAFE_Y_MAX = 470.0

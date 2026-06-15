@@ -27,9 +27,9 @@ BASE_FRAME = "base_link"
 EE_LINK = "link_6"
 JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
 
-VELOCITY_SCALE = 0.3
-ACCELERATION_SCALE = 0.3
-SLOW_VELOCITY_SCALE = 1.0   # 수직 하강 파지 시 저속
+VELOCITY_SCALE = 0.5
+ACCELERATION_SCALE = 0.2
+SLOW_VELOCITY_SCALE = 0.4   # 수직 하강 파지 시 저속
 
 X_OFFSET = 185.0
 SIDE_APPROACH_DIST = 180.0
@@ -390,7 +390,7 @@ class PickItemServer(Node):
         feedback_msg.state = f"물품 파지 중 (실측 보정 너비: {target_width/10:.1f}mm)"
         goal_handle.publish_feedback(feedback_msg)
         self.get_logger().info(f"[DEBUG] target_width={target_width} ({target_width/10:.1f}mm)")
-        close_until_grip_detected(self.gripper, force_val=30, timeout=30.0)
+        close_until_grip_detected(self.gripper, force_val=100, timeout=5.0, poll_interval= 0.02)
         time.sleep(0.5)
         self.get_logger().info(f"wait_x={wait_x}, pick_x={pick_x}, pick_y={pick_y}")
 
@@ -549,7 +549,7 @@ class PickItemServer(Node):
         )
         time.sleep(0.5)
 
-        close_until_grip_detected(self.gripper, force_val=30, timeout=30.0)
+        close_until_grip_detected(self.gripper, force_val=80, timeout=5.0, poll_interval= 0.02)
         time.sleep(0.5)
 
         # 로직 7: 들어올리기
