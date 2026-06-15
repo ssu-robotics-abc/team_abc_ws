@@ -138,7 +138,7 @@ class ScanBarcodeServer(Node):
 
     def sweep_joint_6_for_scan(self, start_wait_time, timeout_duration):
         start_j6 = self.joints_scanner["joint_6"]
-        step_rotation = math.radians(10.0)
+        step_rotation = math.radians(15.0)
         scan_goal_joints = self.joints_scanner.copy()
 
         target_positions = self._make_joint_6_scan_positions(start_j6, step_rotation)
@@ -157,11 +157,11 @@ class ScanBarcodeServer(Node):
 
                 scan_goal_joints["joint_6"] = target_j6
 
-                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.3, a_scale=0.2):
+                if not self.plan_and_execute_joints(scan_goal_joints, planner_id="PTP", v_scale=0.5, a_scale=0.2):
                     self.get_logger().error(f"스캔 회전 이동 실패: joint_6={target_j6:.3f} rad")
                     return False
                 last_target_j6 = target_j6
-                time.sleep(0.1)
+                time.sleep(1.5)
 
         return self.is_scanned
 
