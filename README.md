@@ -6,7 +6,7 @@
 
 이 프로젝트는 음성 인식, VLM 기반 주문 해석, 객체 인식, 로봇팔 제어를 하나의 파이프라인으로 통합하는 것을 목표로 합니다.
 
-<img width="2560" height="1600" alt="스크린샷(3)" src="https://github.com/user-attachments/assets/52d2afc1-56fc-44d2-ad84-f2c9b33c7986" />
+<img width="1507" height="933" alt="최종 흐름도" src="https://github.com/user-attachments/assets/d7c5ec93-95f4-42bb-b01a-d9aaa1b920b4" />
 
 ---
 
