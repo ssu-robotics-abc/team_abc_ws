@@ -1,96 +1,195 @@
-## 1. abc_interfaces
+# Team ABC Robotics Workspace
 
-> ROS2 패키지 간 통신에 사용할 커스텀 메시지, 서비스, 액션을 정의
+> 2026-1 COOP Robotics Workspace
 
+음성 명령을 기반으로 상품을 인식하고, 로봇팔이 상품을 집어 바코드를 스캔한 뒤 지정 위치에 배치하는 ROS 2 기반 로보틱스 워크스페이스입니다.
 
-## 2. abc_bringup
+이 프로젝트는 음성 인식, VLM 기반 주문 해석, 객체 인식, 로봇팔 제어를 하나의 파이프라인으로 통합하는 것을 목표로 합니다.
 
-> 전체 시스템을 실행하기 위한 launch/config 전용 패키지
+---
 
-### Quick Start
+## Package Responsibilities
+
+| Package                   | Responsibility                                     |
+| ------------------------- | -------------------------------------------------- |
+| `abc_bringup`             | 전체 시스템 실행을 위한 launch 관리                            |
+| `abc_interfaces`          | 공통 message, service, action 정의                     |
+| `abc_speech`              | 사용자 음성 인식 STT와 음성 응답 TTS 처리                        |
+| `vlm_select`              | 사용자 주문 해석, 재고 확인, VLM 기반 요청 처리                     |
+| `abc_perception`          | RealSense 이미지 입력, YOLO 객체 탐지, 탐지 결과 발행             |
+| `abc_manipulation`        | 로봇팔 task planning, pick, barcode scan, place 동작 수행 |
+| `dsr_moveit_config_m0609` | Doosan M0609 로봇 모델, MoveIt2, controller 설정         |
+
+---
+
+## Requirements
+
+### System
+
+* Ubuntu
+* ROS 2
+* Python 3.10
+* `colcon`
+* `rosdep`
+* MoveIt2 / MoveItPy
+* Intel RealSense ROS driver
+* Doosan Robotics ROS 2 packages
+* OnRobot RG2 gripper connection
+
+### Python Dependencies
+
+주요 Python 의존성은 다음과 같습니다.
+
+```text
+numpy
+opencv-python
+pandas
+pyyaml
+requests
+torch
+torchvision
+ultralytics
+pyrealsense2
+scikit-learn
+scipy
+matplotlib
+pymodbus
+pyserial
+gtts
+speechrecognition
+pygame
+```
+
+정확한 의존성은 프로젝트 설정 파일과 각 패키지의 `package.xml`을 함께 확인하세요.
+
+---
+
+## Installation
+
+### 1. Clone Repository
 
 ```bash
-ros2_ws
-ws_moveit
-ros2 launch dsr_bringup2 dsr_bringup2_rviz.launch.py mode:=real model:=m0609 host:=192.168.1.100
-ros2 launch realsense2_camera rs_align_depth_launch.py depth_module.depth_profile:=640x480x30 rgb_camera.color_profile:=640x480x30 initial_reset:=true align_depth.enable:=true
+git clone https://github.com/ssu-robotics-abc/team_abc_ws.git
+cd team_abc_ws
 ```
-대신
+
+### 2. Source ROS 2
 
 ```bash
-ros2_ws
-ws_moveit
-ros2 launch abc_bringup demo.launch.py
+source /opt/ros/$ROS_DISTRO/setup.bash
 ```
 
-로 실행 가능  
-  
+예시:
 
+```bash
+source /opt/ros/humble/setup.bash
+```
 
+### 3. Install ROS Dependencies
 
-필요 역할:  
-- 전체 노드 실행 관리  
-- RealSense 실행  
-- YOLO perception 노드 실행  
-- task planner 실행  
-- manipulation 노드 실행  
-- logger 실행  
-- 시연용 launch 파일 관리  
-- 파라미터 yaml 관리  
+```bash
+rosdep update
+rosdep install --from-paths src -y --ignore-src
+```
 
-## 3. abc_speech
+### 4. Build Workspace
 
-> 음성 인식 담당 패키지
+```bash
+colcon build --symlink-install
+source install/setup.bash
+```
 
-주요 역할:
-- 마이크 입력 수집하고 STT를 수행하여
-- 음성 명령을 텍스트 주문으로 변환
-- 주문 결과를 특정 데이터 형태로 publish
-- 상품 재고 부족 시 재주문 요청
+새 터미널을 열었다면 다음 명령을 다시 실행해야 합니다.
 
+```bash
+source install/setup.bash
+```
 
-## 4. abc_perception
+---
 
-> RealSense와 YOLO 등을 이용한 비전 인식 패키지
+## Quick Start
 
-## 5. abc_calibration
+### Integrated Demo
 
-> 카메라 좌표계를 로봇 베이스 좌표계로 변환하는 패키지
+전체 데모 실행은 `abc_bringup`의 launch 파일을 사용합니다.
 
-필요 역할:
-- Eye-in-hand camera transform 관리
-- Hand-Eye calibration 결과 적용
-- camera frame → robot base frame 좌표 변환
-- TF publish
-- 목표 물체 pose 변환
+```bash
+ros2 launch abc_bringup abc.launch.py
+```
 
+현재 TTS 노드는 별도 터미널에서 실행합니다.
 
-## 6. abc_task_planner
+```bash
+ros2 run abc_speech tts_node
+```
 
-> 음성 명령과 비전 인식 결과를 바탕으로 로봇 행동을 결정하는 패키지
+`abc.launch.py`는 RealSense, perception, manipulation, robot bringup 등 데모에 필요한 핵심 노드를 실행하기 위한 진입점입니다.
 
+---
 
-## 7. abc_manipulation
+## Run Individual Nodes
 
-> 로봇팔 제어와 그리퍼 제어를 담당하는 패키지
+필요한 경우 각 노드를 개별적으로 실행할 수 있습니다.
 
-필요 역할:
-- 목표 pose 수신
-- MoveIt2 기반 경로 계획
-- 두산 M0609 로봇 이동 명령
-- OnRobot RG2 그리퍼 open/close 제어
-- 파지 성공 여부 판단
-- 충돌 및 비상 정지 처리
+### Speech
 
+```bash
+ros2 run abc_speech stt_node
+ros2 run abc_speech tts_node
+```
 
-## 8. abc_logger
+### VLM
 
-> 실험 결과와 시스템 상태를 기록하는 패키지
+```bash
+ros2 run vlm_select vlm_node
+```
 
-필요 역할:
-- STT 결과 기록         (완료)
-- VLA 추론 시간 기록
-- 물체 탐지 결과 기록
-- 파지 성공 여부 기록
-- 작업 시간 기록
-- CSV 또는 SQLite 저장
+### Perception
+
+```bash
+ros2 run abc_perception yolo_node
+```
+
+### Manipulation
+
+```bash
+ros2 run abc_manipulation task_planner
+ros2 run abc_manipulation pick_item
+ros2 run abc_manipulation scan_barcode
+ros2 run abc_manipulation place_item
+```
+
+---
+
+## Troubleshooting
+
+### `package not found` 오류가 발생하는 경우
+
+빌드 후 workspace setup 파일을 source 했는지 확인합니다.
+
+```bash
+source install/setup.bash
+```
+
+새 터미널을 열었다면 위 명령을 다시 실행해야 합니다.
+
+### RealSense image topic이 보이지 않는 경우
+
+```bash
+ros2 topic list | grep camera
+```
+
+RealSense launch가 정상 실행되었는지 확인합니다.
+
+### Detection 결과가 나오지 않는 경우
+
+```bash
+ros2 topic echo /detections
+```
+
+다음 항목을 확인합니다.
+
+* RealSense color image topic 입력 여부
+* YOLO model 파일 설치 여부
+* `abc_perception` 빌드 여부
+* camera topic name 일치 여부
