@@ -218,7 +218,7 @@ class PickItemServer(Node):
 
     def request_recapture(self, barcode: str):
         """[vlm_perception_node 시나리오] /recapture_item 서비스로 '지금 프레임'
-        라이브 재탐지를 요청한다. 성공 시 (center_x, center_y) 픽셀, 실패 시 None.
+        라이브 재탐지를 요청한다. 성공 시 (center_x, center_y, width, height) 픽셀, 실패 시 None.
         서비스가 없으면(=yolo_node 시나리오) None 을 반환해 토픽 폴백으로 넘긴다."""
         if not barcode:
             self.get_logger().warn("⚠️ 바코드가 비어 재탐지 불가 → 폴백")
@@ -245,7 +245,12 @@ class PickItemServer(Node):
             msg = result.message if result is not None else "응답 없음"
             self.get_logger().warn(f"⚠️ 재탐지 실패({msg}) → fallback")
             return None
-        return float(result.center_x), float(result.center_y)
+        return (
+            float(result.center_x),
+            float(result.center_y),
+            float(result.width),
+            float(result.height),
+        )
 
     def recapture_from_tracking_topic(self):
         """[yolo_node 시나리오] /yolo_tracking 의 최신 픽셀을 사용 (없으면 None).
@@ -253,7 +258,100 @@ class PickItemServer(Node):
         cx, cy = self._latest_yolo_cx, self._latest_yolo_cy
         if cx is None or cy is None:
             return None
-        return float(cx), float(cy)
+        return float(cx), float(cy), None, None
+
+    def recapture_pick_target(
+        self,
+        fallback_x: float,
+        fallback_y: float,
+        fallback_z: float,
+        fallback_target_width: int,
+        fallback_target_height: float,
+        fallback_z_dist: float,
+        barcode: str,
+    ):
+        """현재 프레임 재탐지로 수평 파지용 X/Y/Z/depth/width/height 를 다시 계산한다."""
+        recap = self.request_recapture(barcode)          # 1순위: 서비스 (vlm_perception_node)
+        if recap is None:
+            recap = self.recapture_from_tracking_topic()  # 2순위: 토픽 폴백 (yolo_node)
+        if recap is None:
+            self.get_logger().warn("⚠️ 재탐지 좌표 없음(서비스/토픽 모두) → 기존 좌표/depth 사용")
+            return (
+                fallback_x,
+                fallback_y,
+                fallback_z,
+                fallback_target_width,
+                fallback_target_height,
+                fallback_z_dist,
+            )
+        cx_px, cy_px, width_px, height_px = recap
+
+        depth_frame = self.img_node.get_depth_frame()
+        if depth_frame is None:
+            self.get_logger().warn("⚠️ depth frame 없음 → 기존 좌표/depth 사용")
+            return (
+                fallback_x,
+                fallback_y,
+                fallback_z,
+                fallback_target_width,
+                fallback_target_height,
+                fallback_z_dist,
+            )
+
+        fx = self.intrinsics["fx"]
+        fy = self.intrinsics["fy"]
+        ppx = self.intrinsics["ppx"]
+        ppy = self.intrinsics["ppy"]
+
+        h_d, w_d = depth_frame.shape
+        cx_i = max(0, min(int(cx_px), w_d - 1))
+        cy_i = max(0, min(int(cy_px), h_d - 1))
+        roi_r = 5
+        y0 = max(0, cy_i - roi_r); y1 = min(h_d, cy_i + roi_r + 1)
+        x0 = max(0, cx_i - roi_r); x1 = min(w_d, cx_i + roi_r + 1)
+        roi = depth_frame[y0:y1, x0:x1]
+        valid = roi[roi > 0]
+        if len(valid) == 0:
+            self.get_logger().warn("⚠️ ROI depth 유효값 없음 → 기존 좌표/depth 사용")
+            return (
+                fallback_x,
+                fallback_y,
+                fallback_z,
+                fallback_target_width,
+                fallback_target_height,
+                fallback_z_dist,
+            )
+
+        z_dist = float(np.median(valid))
+        current_pose = self.get_current_pose_dsr()
+        cam_coords = ((cx_i - ppx) * z_dist / fx, (cy_i - ppy) * z_dist / fy, z_dist)
+        base_xyz = self.transform_to_base(cam_coords, current_pose)
+
+        target_width = fallback_target_width
+        if width_px is not None and width_px > 0:
+            obj_width_mm = (width_px * z_dist) / fx
+            target_width = int(obj_width_mm * 10 * SQUEEZE_RATIO)
+            target_width = max(0, min(target_width, 1100))
+
+        target_height = fallback_target_height
+        if height_px is not None and height_px > 0:
+            target_height = height_px
+
+        self.get_logger().info(
+            f"🎯 재탐지 pick target: "
+            f"XYZ=({fallback_x:.1f},{fallback_y:.1f},{fallback_z:.1f}) → "
+            f"({base_xyz[0]:.1f},{base_xyz[1]:.1f},{base_xyz[2]:.1f}) mm, "
+            f"depth={fallback_z_dist:.0f}→{z_dist:.0f}mm, "
+            f"target_width={fallback_target_width/10:.1f}→{target_width/10:.1f}mm"
+        )
+        return (
+            float(base_xyz[0]),
+            float(base_xyz[1]),
+            float(base_xyz[2]),
+            target_width,
+            target_height,
+            z_dist,
+        )
 
     def recapture_y(self, fallback_y: float, barcode: str) -> float:
         """wait_x 도달 후 라이브 재탐지 픽셀로 Y 재계산 (eye-in-hand 시점 보정).
@@ -269,7 +367,7 @@ class PickItemServer(Node):
         if recap is None:
             self.get_logger().warn("⚠️ 재탐지 좌표 없음(서비스/토픽 모두) → fallback Y 사용")
             return fallback_y
-        cx_px, cy_px = recap
+        cx_px, cy_px = recap[:2]
 
         depth_frame = self.img_node.get_depth_frame()
         if depth_frame is None:
@@ -602,9 +700,18 @@ class PickItemServer(Node):
                 raise RuntimeError("접근 대기 위치 이동 실패")
             time.sleep(0.5)
 
-            # YOLO 재탐지로 Y 보정
-            y_new = self.recapture_y(y, barcode)
-            pick_y = y_new + Y_PICK_OFFSET
+            # YOLO/VLM 재탐지로 좌표, depth, grip 폭을 현재 프레임 기준으로 갱신
+            old_wait_x = wait_x
+            x, y, z, target_width, target_height, z_dist = self.recapture_pick_target(
+                x, y, z, target_width, target_height, z_dist, barcode
+            )
+            wait_x = x - (X_OFFSET + SIDE_APPROACH_DIST)
+            grip_z = z + 30.0
+            pick_y = y + Y_PICK_OFFSET
+            if abs(wait_x - old_wait_x) > 1.0:
+                if not self.plan_and_execute_pose([wait_x, pick_y, grip_z, HORIZ_RX, HORIZ_RY, HORIZ_RZ], "PTP"):
+                    raise RuntimeError("재탐지 접근 대기 위치 이동 실패")
+                time.sleep(0.5)
 
             # Step 2: 진입
             feedback_msg.state = "물품으로 진입 중"
@@ -663,6 +770,20 @@ class PickItemServer(Node):
                 fy = self.intrinsics["fy"]
                 obj_height_mm = (target_height * z_dist) / fy
                 place_z = REAL_TABLE_Z + (obj_height_mm / 2.0) - 5.0
+
+                feedback_msg.state = "하강 전 파지 상태 재확인 중..."
+                goal_handle.publish_feedback(feedback_msg)
+                if not self._is_gripping(refresh=True):
+                    self.get_logger().warn(
+                        f"⚠️ 하강 전 물품 이탈 감지 (시도 {attempt}/{MAX_TRANSPORT_RETRY}) "
+                        "→ 수직 복구 후 반품대로 이동"
+                    )
+                    self.gripper.open_gripper()
+                    self._vertical_recovery_to_pos_return(goal_handle, POS_RETURN)
+                    self.gripper.open_gripper()
+                    if attempt >= MAX_TRANSPORT_RETRY:
+                        raise RuntimeError("하강 전 이탈 복구 최대 횟수 초과")
+                    continue
 
                 self.get_logger().info(f"📏 물체높이: {obj_height_mm:.1f}mm | place_z: {place_z:.1f}mm")
                 self.plan_and_execute_pose([430, 13.76, max(place_z, 80), HORIZ_RX, HORIZ_RY, HORIZ_RZ], "LIN", velocity_scale=0.05)
