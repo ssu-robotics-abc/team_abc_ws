@@ -25,7 +25,6 @@ TARGET_CLASSES = [
 ]
 
 # DB API 엔드포인트
-# DB_BASE_URL = "http://127.0.0.1:8000"
 DB_BASE_URL = "https://ssu-abc-store-api.ssammwu.info"
 DB_STOCK_ENDPOINT = "/api/v1/stock/{class_name}"
 
