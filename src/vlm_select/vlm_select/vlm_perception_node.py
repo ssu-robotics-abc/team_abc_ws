@@ -48,7 +48,7 @@ from dotenv import load_dotenv
 
 # abc_interfaces 패키지의 서비스 임포트
 from abc_interfaces.srv import UserRequest     # /vlm_to_tts, /vlm_request
-from abc_interfaces.srv import Stt             # /stt_results
+from abc_interfaces.srv import Stt, SttMatched             # /stt_results
 from abc_interfaces.srv import RequestItem     # /request_item (YOLO 통합)
 from abc_interfaces.srv import ResponseItem    # /response_item (YOLO 통합)
 from abc_interfaces.srv import DetectItem      # /recapture_item (접근 위치 라이브 재탐지)
@@ -563,6 +563,13 @@ class VlmPerceptionNode(Node):
             self.stt_service_callback
         )
 
+        # ── (vlm_node 역할) STT 매칭 성공 서비스 서버 ─────────────
+        self.stt_matched_srv = self.create_service(
+            SttMatched,
+            "/stt_matched",
+            self.stt_matched_service_callback
+        )
+
         # ── (vlm_node 역할) TTS / vlm_request 클라이언트 ───────────
         self.tts_cli = self.create_client(UserRequest, "/vlm_to_tts")
         self.vlm_cli = self.create_client(UserRequest, "/vlm_request")
@@ -604,7 +611,7 @@ class VlmPerceptionNode(Node):
 
         self.get_logger().info(
             "VLM Perception 노드 가동 완료 (단일 프롬프트 통합 + 접근 위치 재탐지).\n"
-            f"  STT 서비스:      /stt_results\n"
+            f"  STT 서비스:      /stt_results, /stt_matched\n"
             f"  물품 요청 서비스: {self.request_service_name}\n"
             f"  탐지 응답 서비스: {self.response_service_name}\n"
             f"  재탐지 서비스:    {self.recapture_service_name}\n"
@@ -664,6 +671,92 @@ class VlmPerceptionNode(Node):
 
         response.success = True
         response.message = "명령 처리를 시작했습니다."
+        return response
+
+    def stt_matched_service_callback(self, request: SttMatched.Request, response: SttMatched.Response):
+        """
+        /stt_matched 서비스 요청을 처리한다.
+        request.class_name: STT에서 매칭 성공한 상품 class_name 배열
+        request.iteration: 각 상품의 요구 개수 배열
+
+        STT가 이미 상품 매칭을 성공했으므로 명령 분석은 생략하되,
+        현재 이미지에서 해당 상품들의 박스를 탐지해 기존 캐시/DB 흐름을 그대로 탄다.
+        """
+        if not request.class_name or len(request.class_name) != len(request.iteration):
+            self.get_logger().warn("[STT 매칭 성공] 빈 또는 불일치한 class_name/iteration 수신. 무시합니다.")
+            response.success = False
+            response.message = "빈 명령 또는 형식 오류입니다."
+            return response
+
+        if self.latest_raw_image is None:
+            self.get_logger().error("아직 카메라 원본 영상이 들어오지 않았습니다.")
+            response.success = False
+            response.message = "카메라 영상 미수신 상태입니다."
+            return response
+
+        matched_targets = [
+            {"class_name": cn, "iteration": int(it)}
+            for cn, it in zip(request.class_name, request.iteration)
+        ]
+        requested_classes = [target["class_name"] for target in matched_targets]
+
+        self.get_logger().info(
+            f"\n[STT 매칭 성공] class_name={requested_classes}, "
+            f"iteration={[target['iteration'] for target in matched_targets]} 수신됨. "
+            "현재 이미지에서 박스 탐지 시작..."
+        )
+
+        detections = detect_objects_from_gemini(
+            self.model, self.latest_raw_image, requested_classes
+        )
+
+        best_by_class = {}
+        for det in detections:
+            c_name = det["class_name"]
+            if c_name not in requested_classes:
+                continue
+            if c_name not in best_by_class or det["confidence"] > best_by_class[c_name]["confidence"]:
+                best_by_class[c_name] = det
+
+        analyzed = []
+        for target in matched_targets:
+            c_name = target["class_name"]
+            det = best_by_class.get(c_name)
+            if det is None:
+                self.get_logger().warn(f"  [{c_name}] 현재 이미지에서 탐지되지 않음(박스 없음).")
+                analyzed.append({
+                    "class_name": c_name,
+                    "iteration": target["iteration"],
+                    "confidence": 0.0,
+                    "center_x": None,
+                    "center_y": None,
+                    "width": None,
+                    "height": None,
+                })
+                continue
+
+            analyzed.append({
+                "class_name": c_name,
+                "iteration": target["iteration"],
+                "confidence": det["confidence"],
+                "center_x": det["center_x"],
+                "center_y": det["center_y"],
+                "width": det["width"],
+                "height": det["height"],
+            })
+
+        self.update_detection_cache(analyzed)
+
+        target_list = [
+            {"class_name": a["class_name"], "iteration": a["iteration"]}
+            for a in analyzed
+        ]
+        self.get_logger().info(f"▶ STT 매칭 기반 탐지 완료: {target_list}")
+
+        self.process_targets_with_db(target_list)
+
+        response.success = True
+        response.message = "STT 매칭 성공: 박스 탐지 및 DB 조회 시작"
         return response
 
     def update_detection_cache(self, analyzed: list):

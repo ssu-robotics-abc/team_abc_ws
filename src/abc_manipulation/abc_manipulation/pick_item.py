@@ -38,6 +38,7 @@ REAL_TABLE_Z = 5.0
 Y_PICK_OFFSET = 5.0   # 수평 파지 Y 보정 (오른쪽으로 치우치면 음수, 왼쪽이면 양수)
 HORIZ_MIN_GRIP_WIDTH_RATIO = 0.5
 VERT_MIN_GRIP_WIDTH_RATIO = 0.5
+MAX_GRIPPER_WIDTH_MM = 110.0
 
 # pos_home_horiz = [431.39, 13.76, 112.90, 178.23, -90.00, -86.81] 에서 추출한 수평 자세 오리엔테이션
 HORIZ_RX = 178.23
@@ -538,9 +539,9 @@ class PickItemServer(Node):
         cy_px = int(cy_f)
 
         if rect_w < rect_h:
-            obj_angle_deg = rect_angle + 90.0
+            long_axis_deg = rect_angle + 90.0
         else:
-            obj_angle_deg = rect_angle
+            long_axis_deg = rect_angle
 
         bx, by, bw, bh = cv2.boundingRect(cnt)
         roi_depth = depth_frame[by:by+bh, bx:bx+bw]
@@ -549,13 +550,30 @@ class PickItemServer(Node):
             raise RuntimeError("물체 ROI 내 유효 depth 없음")
         obj_surface_mm = float(np.median(roi_valid))
 
-        obj_width_mm = (min(rect_w, rect_h) * obj_surface_mm) / fx
+        long_width_mm = (max(rect_w, rect_h) * obj_surface_mm) / fx
+        short_width_mm = (min(rect_w, rect_h) * obj_surface_mm) / fx
         obj_height_mm = floor_mm - obj_surface_mm
+
+        if long_width_mm <= MAX_GRIPPER_WIDTH_MM:
+            grip_axis_label = "long"
+            grip_angle_deg = long_axis_deg
+            selected_width_mm = long_width_mm
+        else:
+            grip_axis_label = "short"
+            grip_angle_deg = long_axis_deg + 90.0
+            selected_width_mm = short_width_mm
+
+        if selected_width_mm > MAX_GRIPPER_WIDTH_MM:
+            raise RuntimeError(
+                f"수직 파지 폭 초과: long={long_width_mm:.1f}mm "
+                f"short={short_width_mm:.1f}mm max={MAX_GRIPPER_WIDTH_MM:.1f}mm"
+            )
 
         self.get_logger().info(
             f"📦 물체 검출: center_px=({cx_px},{cy_px}) "
-            f"너비={obj_width_mm:.1f}mm 높이={obj_height_mm:.1f}mm "
-            f"각도={obj_angle_deg:.1f}° "
+            f"긴폭={long_width_mm:.1f}mm 짧은폭={short_width_mm:.1f}mm "
+            f"높이={obj_height_mm:.1f}mm 선택={grip_axis_label} "
+            f"각도={grip_angle_deg:.1f}° "
             f"표면depth={obj_surface_mm:.1f}mm 바닥depth={floor_mm:.1f}mm"
         )
 
@@ -569,16 +587,17 @@ class PickItemServer(Node):
 
         target_x, target_y, target_z = base_xyz[0], base_xyz[1], base_xyz[2]
         self.get_logger().info(
-            f"🎯 수직 피킹 목표: X={target_x:.1f} Y={target_y:.1f} Z={target_z:.1f} 각도={obj_angle_deg:.1f}°"
+            f"🎯 수직 피킹 목표: X={target_x:.1f} Y={target_y:.1f} Z={target_z:.1f} "
+            f"선택폭={selected_width_mm:.1f}mm 선택={grip_axis_label} 각도={grip_angle_deg:.1f}°"
         )
 
         vert_rx, vert_ry, vert_rz = capture_pose[3], capture_pose[4], capture_pose[5]
-        vert_rz = vert_rz + obj_angle_deg
+        vert_rz = vert_rz + grip_angle_deg
 
         Z_SYSTEM_MARGIN = 200.0
         grip_z = REAL_TABLE_Z + obj_height_mm + Z_SYSTEM_MARGIN
 
-        feedback_msg.state = f"하강 파지 중... 너비={obj_width_mm:.1f}mm 높이={obj_height_mm:.1f}mm"
+        feedback_msg.state = f"하강 파지 중... 너비={selected_width_mm:.1f}mm 높이={obj_height_mm:.1f}mm"
         goal_handle.publish_feedback(feedback_msg)
         self.plan_and_execute_pose(
             [target_x, target_y, grip_z - 15, vert_rx, vert_ry, vert_rz],
@@ -589,7 +608,7 @@ class PickItemServer(Node):
 
         grip_detected = close_until_grip_detected(
             self.gripper,
-            force_val=80,
+            force_val=60,
             timeout=5.0,
             poll_interval=0.02,
         )
@@ -597,11 +616,11 @@ class PickItemServer(Node):
         if not grip_detected:
             raise RuntimeError("수직 파지 grip 미감지")
         width_mm = self.gripper.get_width()
-        min_grip_width_mm = obj_width_mm * VERT_MIN_GRIP_WIDTH_RATIO
+        min_grip_width_mm = selected_width_mm * VERT_MIN_GRIP_WIDTH_RATIO
         if width_mm < min_grip_width_mm:
             raise RuntimeError(
                 f"수직 파지 폭 부족: width={width_mm:.1f}mm "
-                f"min={min_grip_width_mm:.1f}mm expected={obj_width_mm:.1f}mm"
+                f"min={min_grip_width_mm:.1f}mm expected={selected_width_mm:.1f}mm"
             )
 
         feedback_msg.state = "수직 피킹 완료 후 들어올리는 중..."
@@ -721,7 +740,7 @@ class PickItemServer(Node):
             self.get_logger().info(f"[DEBUG] target_width={target_width} ({target_width/10:.1f}mm)")
             grip_detected = close_until_grip_detected(
                 self.gripper,
-                force_val=100,
+                force_val=60,
                 timeout=5.0,
                 poll_interval=0.02,
             )
