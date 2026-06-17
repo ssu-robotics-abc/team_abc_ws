@@ -116,7 +116,7 @@ source install/setup.bash
 전체 데모 실행은 `abc_bringup`의 launch 파일을 사용합니다.
 
 ```bash
-ros2 launch abc_bringup abc.launch.py
+ros2 launch abc_bringup abc_yolo.launch.py
 ```
 
 현재 TTS 노드는 별도 터미널에서 실행합니다.
