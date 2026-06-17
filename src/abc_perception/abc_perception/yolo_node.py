@@ -169,9 +169,9 @@ class YoloNode(Node):
         if self.debug_view:
             results = self.model(frame, conf=0.5, verbose=False)
             result = results[0]
-            # debug_frame = self.draw_debug_frame(frame, result)
-            # cv2.imshow("YOLO Real-time Debug", debug_frame)
-            cv2.imshow("YOLO Real-time Debug", frame)
+            debug_frame = self.draw_debug_frame(frame, result)
+            cv2.imshow("YOLO Real-time Debug", debug_frame)
+            #cv2.imshow("YOLO Real-time Debug", frame)
             cv2.waitKey(1)
 
     def detect_requested_item(self, requested_class_name):
@@ -259,7 +259,7 @@ class YoloNode(Node):
             
             label = f"{display_name} ({barcode}) {confidence:.2f}"
 
-            color = (0, 255, 0)
+            color = (125, 125, 125)
 
             cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
 
@@ -307,9 +307,9 @@ class YoloNode(Node):
             confidence = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             
-            label = f"{display_name} ({barcode}) {confidence:.2f}"
+            label = f"{display_name} {confidence:.2f}"
 
-            color = (0, 255, 0)
+            color = (125, 125, 125)
 
             cv2.rectangle(debug_frame, (x1, y1), (x2, y2), color, 2)
 

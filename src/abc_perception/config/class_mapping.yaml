@@ -19,4 +19,4 @@ class_mapping:
     name: "pocari_sweat"
   6:
     barcode: "8801121768440"
-    name: "soy_milk"
+    name: "soy_milk"  

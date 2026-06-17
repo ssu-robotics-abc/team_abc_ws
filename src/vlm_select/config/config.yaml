@@ -25,3 +25,6 @@ classes:
     barcode: "8801121768440"
   - name: orange_juice
     barcode: "8801056071226"
+  - name: mango
+    barcode: "8801056001667"
+    
