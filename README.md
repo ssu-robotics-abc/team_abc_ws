@@ -119,6 +119,10 @@ source install/setup.bash
 ros2 launch abc_bringup abc_yolo.launch.py
 ```
 
+> [!NOTE]
+> 만약 zeroshot을 테스트하고 싶다면 `abc_yolo.launch.py`가 아닌, `zeroshot.launch.py`를 실행시켜주세요.
+
+
 현재 TTS 노드는 별도 터미널에서 실행합니다.
 
 ```bash
