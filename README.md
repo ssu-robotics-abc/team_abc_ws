@@ -120,7 +120,7 @@ ros2 launch abc_bringup abc_yolo.launch.py
 ```
 
 > [!NOTE]
-> 만약 zeroshot을 테스트하고 싶다면 `abc_yolo.launch.py`가 아닌, `zeroshot.launch.py`를 실행시켜주세요.
+> 만약 zeroshot을 테스트하고 싶다면 `abc_yolo.launch.py`가 아닌, `abc_zeroshot.launch.py`를 실행시켜주세요.
 
 
 현재 TTS 노드는 별도 터미널에서 실행합니다.
@@ -199,3 +199,48 @@ ros2 topic echo /detections
 * YOLO model 파일 설치 여부
 * `abc_perception` 빌드 여부
 * camera topic name 일치 여부
+
+
+### Gemini API Key 설정
+
+VLM 노드는 Gemini API를 사용하므로 `GEMINI_API_KEY` 환경변수가 필요합니다.
+
+```bash
+echo 'export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+설정이 정상적으로 적용되었는지 확인합니다.
+
+```bash
+echo $GEMINI_API_KEY
+```
+
+새 터미널을 열었다면 `.bashrc`가 자동으로 적용되지만, 적용되지 않는 경우 아래 명령을 다시 실행합니다.
+
+```bash
+source ~/.bashrc
+```
+
+
+### Web Server URL 설정
+
+로봇 노드가 주문/재고 서버와 통신하려면 서버 주소를 `.env` 파일에 설정해야 합니다.
+
+```bash
+cp src/abc_manipulation/config/.env.example src/abc_manipulation/config/.env
+```
+
+`.env` 파일을 열고 서버 주소를 실제 실행 환경에 맞게 수정합니다.
+
+```env
+WEB_SERVER_URL=127.0.0.1:8000   # 실제 서버 주소를 넣어주세요!
+```
+
+서버가 다른 PC에서 실행 중이라면 `127.0.0.1` 대신 서버 PC의 IP 주소를 입력합니다.
+
+예시:
+
+```env
+WEB_SERVER_URL=192.168.0.10:8000
+```
